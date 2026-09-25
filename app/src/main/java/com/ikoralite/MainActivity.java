@@ -201,6 +201,15 @@ public class MainActivity extends Activity {
         diagView = new TextView(this);
         diagView.setTextSize(12);
         col.addView(diagView);
+        Button test = new Button(this);
+        test.setText("受信テスト（知らせが ikora に届くか）");
+        test.setAllCaps(false);
+        test.setOnClickListener(v -> {
+            SessionReceiver.sendSelfTest(this);
+            // Delivery takes milliseconds; show whatever arrived after a moment.
+            main.postDelayed(this::refresh, 1500);
+        });
+        col.addView(test);
         Button send = new Button(this);
         send.setText("診断情報を送る");
         send.setAllCaps(false);
@@ -289,7 +298,8 @@ public class MainActivity extends Activity {
             main.post(() -> {
                 probeText = text;
                 probing = false;
-                Diag.note(this, "他の効果の調査: " + text.replace("\n\n", " / ").replace('\n', ' '));
+                // Only changes are worth a line: the record holds 40, and receipts matter more.
+                Diag.noteIfChanged(this, "probe", "他の効果の調査: " + text.replace("\n\n", " / ").replace('\n', ' '));
                 if (resumed) refresh();
             });
         }).start();
@@ -297,7 +307,10 @@ public class MainActivity extends Activity {
 
     private String recentEvents() {
         List<String> ev = Diag.events(this);
-        StringBuilder sb = new StringBuilder("最近の出来事（新しい順）:");
+        StringBuilder sb = new StringBuilder();
+        String test = Diag.selfTestResult(this);
+        if (test != null) sb.append("受信テスト: ").append(test).append("\n\n");
+        sb.append("最近の出来事（新しい順）:");
         if (ev.isEmpty()) sb.append("\n（まだ何も起きていません）");
         for (int i = ev.size() - 1; i >= Math.max(0, ev.size() - 6); i--) sb.append('\n').append(ev.get(i));
         return sb.toString();

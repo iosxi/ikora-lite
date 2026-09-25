@@ -31,6 +31,7 @@
     </queries>
 
     <application
+        android:name=".IkoraApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
@@ -59,6 +60,8 @@
             <intent-filter>
                 <action android:name="android.media.action.OPEN_AUDIO_EFFECT_CONTROL_SESSION" />
                 <action android:name="android.media.action.CLOSE_AUDIO_EFFECT_CONTROL_SESSION" />
+                <!-- ikora's own delivery test, sent the same way a player's broadcast is. -->
+                <action android:name="com.ikoralite.SELF_TEST" />
             </intent-filter>
         </receiver>
 

@@ -2,6 +2,8 @@ package com.ikoralite;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.AudioPlaybackConfiguration;
@@ -40,6 +42,13 @@ final class Diag {
         prefs(c).edit().putString(KEY, String.join("\n", ev)).apply();
     }
 
+    /** Like {@link #note}, but skipped when the same key last noted the same text. */
+    static void noteIfChanged(Context c, String key, String what) {
+        if (what.equals(prefs(c).getString("last_" + key, null))) return;
+        prefs(c).edit().putString("last_" + key, what).apply();
+        note(c, what);
+    }
+
     static List<String> events(Context c) {
         String s = prefs(c).getString(KEY, "");
         return s.isEmpty() ? new ArrayList<>() : new ArrayList<>(Arrays.asList(s.split("\n")));
@@ -52,6 +61,48 @@ final class Diag {
 
     static void received(Context c) {
         if (!everReceived(c)) prefs(c).edit().putBoolean("received", true).apply();
+    }
+
+    // --- Delivery self-test -----------------------------------------------------------------
+
+    static void selfTestStart(Context c) {
+        prefs(c).edit().putLong("testAt", System.currentTimeMillis())
+                .putBoolean("testManifest", false).putBoolean("testRuntime", false).apply();
+    }
+
+    static void selfTestArrived(Context c, boolean runtime) {
+        prefs(c).edit().putBoolean(runtime ? "testRuntime" : "testManifest", true).apply();
+    }
+
+    /** Result of the last self-test in words, or null if none has run. */
+    static String selfTestResult(Context c) {
+        SharedPreferences p = prefs(c);
+        long at = p.getLong("testAt", 0);
+        if (at == 0) return null;
+        String when = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT).format(new Date(at));
+        boolean m = p.getBoolean("testManifest", false), r = p.getBoolean("testRuntime", false);
+        return when + " 登録の受け口: " + (m ? "届いた" : "届かない")
+                + " / 動的な受け口: " + (r ? "届いた" : "届かない");
+    }
+
+    /** Version of each installed player we know sends session broadcasts, for comparison. */
+    private static final String[][] PLAYERS = {
+            {"com.google.android.apps.youtube.music", "YouTube Music"},
+            {"com.spotify.music", "Spotify"},
+            {"com.amazon.mp3", "Amazon Music"},
+    };
+
+    static String players(Context c) {
+        StringBuilder sb = new StringBuilder();
+        for (String[] p : PLAYERS) {
+            try {
+                PackageInfo pi = c.getPackageManager().getPackageInfo(p[0], 0);
+                sb.append("- ").append(p[1]).append(' ').append(pi.versionName)
+                        .append(" (targetSdk ").append(pi.applicationInfo.targetSdkVersion).append(")\n");
+            } catch (PackageManager.NameNotFoundException ignored) {
+            }
+        }
+        return sb.length() == 0 ? "（見つからない）\n" : sb.toString();
     }
 
     /**
@@ -106,6 +157,9 @@ final class Diag {
                 .append(" (").append(Build.DEVICE).append(")\n");
         sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
         sb.append("\n[状態]\n").append(state).append('\n');
+        String test = selfTestResult(c);
+        sb.append("\n[受信テスト]\n").append(test == null ? "（未実施）" : test).append('\n');
+        sb.append("\n[音楽アプリの版]\n").append(players(c));
         sb.append("\n[いま鳴っている音]\n");
         List<String> now = playing(c);
         if (now.isEmpty()) sb.append("（なし）\n");
