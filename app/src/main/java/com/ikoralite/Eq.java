@@ -109,16 +109,57 @@ final class Eq {
         // A player that is killed never closes its session; its next one replaces it.
         if (!pkg.isEmpty()) {
             for (Integer old : sessions.keySet().toArray(new Integer[0])) {
-                if (old != session && pkg.equals(sessions.get(old))) close(old);
+                if (old != session && pkg.equals(sessions.get(old))) close(c, old);
             }
         }
         sessions.put(session, pkg);
+        save(c);
         attachMissing(c);
         changed();
     }
 
-    static void close(int session) {
+    /**
+     * Sessions are kept across process restarts. A player announces a session once, when it
+     * starts playing; if ikora's process is replaced mid-song (an update, a force stop, the
+     * system reclaiming memory), the effect dies with it and no second announcement comes.
+     */
+    private static void save(Context c) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<Integer, String> e : sessions.entrySet()) {
+            if (sb.length() > 0) sb.append(';');
+            sb.append(e.getKey()).append(':').append(e.getValue());
+        }
+        prefs(c).edit().putString("sessions", sb.toString()).apply();
+    }
+
+    /**
+     * Called once per process start: re-attach to the sessions saved by the previous process.
+     * Only while music is playing: a CLOSE sent while ikora was dead was missed, so a saved
+     * session with nothing playing is most likely over.
+     */
+    static void restore(Context c) {
+        String saved = prefs(c).getString("sessions", "");
+        if (saved.isEmpty()) return;
+        if (!Diag.mediaPlaying(c)) {
+            prefs(c).edit().remove("sessions").apply();
+            return;
+        }
+        for (String item : saved.split(";")) {
+            int colon = item.indexOf(':');
+            if (colon <= 0) continue;
+            try {
+                sessions.put(Integer.parseInt(item.substring(0, colon)), item.substring(colon + 1));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        Diag.note(c, "前のプロセスのセッションを復元: " + sessions.keySet());
+        attachMissing(c);
+        changed();
+    }
+
+    static void close(Context c, int session) {
         sessions.remove(session);
+        save(c);
         if (session == GLOBAL) return;
         errors.remove(session);
         AudioEffect fx = effects.remove(session);

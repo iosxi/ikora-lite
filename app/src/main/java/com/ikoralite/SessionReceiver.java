@@ -44,7 +44,7 @@ public class SessionReceiver extends BroadcastReceiver {
             Eq.open(c, session, pkg);
             EqService.sync(c);
         } else if (AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION.equals(i.getAction())) {
-            Eq.close(session);
+            Eq.close(c, session);
             EqService.sync(c);
         }
     }

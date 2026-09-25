@@ -19,6 +19,9 @@ public class IkoraApp extends Application {
     public void onCreate() {
         super.onCreate();
         Diag.note(this, "プロセス起動");
+        Eq.restore(this);
+        // May be refused from the background (then the effect lives as long as the process).
+        if (!Eq.effects.isEmpty()) EqService.sync(this);
         IntentFilter f = new IntentFilter();
         f.addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
         f.addAction(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
