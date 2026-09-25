@@ -436,14 +436,14 @@ public class MainActivity extends Activity {
                 }
                 SpannableStringBuilder sb = new SpannableStringBuilder();
                 bold(sb, "音楽が鳴っていますが、音楽アプリから ikora への知らせが届いていません。");
-                sb.append('\n').append(getString(R.string.never_received))
-                        .append('\n').append(getString(R.string.try_global));
+                sb.append('\n').append(getString(nextStep()));
                 return sb;
             }
             if (Diag.everReceived(this)) return getString(R.string.idle);
             SpannableStringBuilder sb = new SpannableStringBuilder();
             bold(sb, "音楽アプリからの知らせを、まだ一度も受け取っていません。");
-            sb.append('\n').append(getString(R.string.never_received));
+            sb.append('\n').append(getString(R.string.never_received))
+                    .append('\n').append(getString(nextStep()));
             return sb;
         }
         SpannableStringBuilder sb = new SpannableStringBuilder();
@@ -468,6 +468,15 @@ public class MainActivity extends Activity {
             }
         }
         return sb;
+    }
+
+    /**
+     * What to try when no broadcast arrives. On the AQUOS R8 the player did send, but a
+     * stopped ikora was not woken for it: staying resident fixed it. Whole-output mode is
+     * for players that never send at all.
+     */
+    private int nextStep() {
+        return Eq.isResident(this) ? R.string.try_global : R.string.try_resident;
     }
 
     private CharSequence globalSummary() {
