@@ -14,4 +14,5 @@
     <string name="resident_mode">常駐して待つ</string>
     <string name="resident_hint">音楽アプリの知らせを取りこぼす端末向け（AQUOS R8 で確認）。ikora を常に動かしておきます（Wavelet と同じやり方）。通知欄に小さく表示が出ます（ON にするとき、通知の許可を求めます）。</string>
     <string name="preset_hint">「＋ 保存」で今の値に名前を付けて保存。自分のプリセットは長押しで削除できます。</string>
+    <string name="bass_hint">低音を持ち上げます。大きな低音は抑えるので、上げても歪みにくくなります（端末標準のイコライザで代用中は単純な持ち上げ）。</string>
 </resources>

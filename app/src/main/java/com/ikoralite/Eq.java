@@ -93,6 +93,93 @@ final class Eq {
         return !effects.isEmpty() || (isOn(c) && (isResident(c) || isGlobal(c)));
     }
 
+    // --- BASS: lift the low end without distortion ------------------------------------------
+
+    static final int BASS_MAX = 5;
+    /** Below this, the low band of the multiband compressor; above it passes untouched. */
+    private static final float BASS_CUTOFF = 150f;
+
+    static int bass(Context c) {
+        return prefs(c).getInt("bass", 0);
+    }
+
+    static void setBass(Context c, int level) {
+        prefs(c).edit().putInt("bass", level).apply();
+        for (Map.Entry<Integer, AudioEffect> e : effects.entrySet()) {
+            if (e.getValue() instanceof DynamicsProcessing) {
+                DynamicsProcessing dp = (DynamicsProcessing) e.getValue();
+                applyBass(dp, level);
+                Diag.note(c, "session " + e.getKey() + ": BASS " + level + " → " + readBack(dp));
+            } else {
+                apply(e.getValue(), gainsDb(c), level);
+                Diag.note(c, "session " + e.getKey() + ": BASS " + level + "（端末標準のイコライザで近似）");
+            }
+        }
+    }
+
+    /** What the engine reports back, to tell "set" from "in effect" (the CPU cost is too small to show it). */
+    private static String readBack(DynamicsProcessing dp) {
+        try {
+            DynamicsProcessing.MbcBand low = dp.getMbcBandByChannelIndex(0, 0);
+            return "圧縮 " + (dp.getMbcByChannelIndex(0).isEnabled() ? "有効" : "無効")
+                    + String.format(java.util.Locale.ROOT, "・低域 %+.0f dB（%.0f Hz 以下, %.0f:1, %.0f dB から）",
+                    low.getPostGain(), low.getCutoffFrequency(), low.getRatio(), low.getThreshold())
+                    + "・リミッター " + (dp.getLimiterByChannelIndex(0).isEnabled() ? "有効" : "無効");
+        } catch (RuntimeException e) {
+            return "読み戻せない: " + e.getMessage();
+        }
+    }
+
+    /**
+     * The low band is raised by its post-gain (+2 dB a step), and compressed above -12 dBFS at
+     * 4:1: quiet bass comes up by the full amount, loud bass swells much less, so the lift does
+     * not turn into overload. A limiter at -1 dBFS catches what is left. Level 0 disables both
+     * stages, so an unused BASS costs nothing.
+     */
+    private static DynamicsProcessing.MbcBand lowBand(int level) {
+        // The engine keeps the compressor stage enabled even when told to disable it (read back
+        // on the Xperia): at level 0 make the band itself neutral, so OFF really leaves bass alone.
+        if (level <= 0) return passBand(BASS_CUTOFF);
+        return new DynamicsProcessing.MbcBand(true, BASS_CUTOFF,
+                5f, 120f,          // attack, release (ms)
+                4f, -12f, 6f,      // ratio, threshold (dB), knee width (dB)
+                -90f, 1f,          // noise gate threshold, expander ratio: off
+                0f, 2f * level);   // pre-gain, post-gain (dB)
+    }
+
+    /** No compression (1:1), no gain: the band passes unchanged. */
+    private static DynamicsProcessing.MbcBand passBand(float cutoff) {
+        return new DynamicsProcessing.MbcBand(true, cutoff, 5f, 120f, 1f, 0f, 0f, -90f, 1f, 0f, 0f);
+    }
+
+    private static DynamicsProcessing.Limiter limiter(int level) {
+        // inUse, enabled, link group, attack, release (ms), ratio, threshold, post-gain (dB)
+        return new DynamicsProcessing.Limiter(true, level > 0, 0, 1f, 60f, 10f, -1f, 0f);
+    }
+
+    private static void applyBass(DynamicsProcessing dp, int level) {
+        try {
+            dp.setMbcAllChannelsTo(new DynamicsProcessing.Mbc(true, level > 0, 2));
+            dp.setMbcBandAllChannelsTo(0, lowBand(level));
+            dp.setMbcBandAllChannelsTo(1, passBand(20000f));
+            dp.setLimiterAllChannelsTo(limiter(level));
+        } catch (RuntimeException e) {
+            // Lost control: another app's settings apply, not ours.
+            Log.w(TAG, "BASS not applied: " + e.getMessage());
+        }
+    }
+
+    /**
+     * For the Equalizer fallback, which has no compressor: the same lift as a plain low shelf
+     * (full below 60 Hz, fading out by 150 Hz). Louder bass can clip there; say so on screen.
+     */
+    private static float shelf(float hz, int level) {
+        if (level <= 0 || hz >= BASS_CUTOFF) return 0f;
+        float full = 2f * level;
+        if (hz <= 60f) return full;
+        return (float) (full * (Math.log(BASS_CUTOFF / hz) / Math.log(BASS_CUTOFF / 60f)));
+    }
+
     /** Keys are "g0".. so the 10-band values of v1–v2 ("b0"..) are not misread. */
     static int step(Context c, int band) {
         return prefs(c).getInt("g" + band, 0);
@@ -221,7 +308,8 @@ final class Eq {
 
     private static void applyAll(Context c) {
         float[] g = gainsDb(c);
-        for (AudioEffect fx : effects.values()) apply(fx, g);
+        int b = bass(c);
+        for (AudioEffect fx : effects.values()) apply(fx, g, b);
     }
 
     /**
@@ -300,6 +388,7 @@ final class Eq {
                 for (int i = 0; i < N; i++) {
                     ((DynamicsProcessing) fx).setPreEqBandAllChannelsTo(i, new DynamicsProcessing.EqBand(true, cutoff(i), 0f));
                 }
+                applyBass((DynamicsProcessing) fx, 0);
             } catch (RuntimeException ignored) {
                 // Lost control meanwhile: nothing of ours is being applied then.
             }
@@ -335,13 +424,20 @@ final class Eq {
             // holds this session with a higher priority, setting our config fails: report
             // that instead of stacking a second equalizer on top.
             try {
+                // Stages in use: the 7-band EQ, a 2-band compressor and a limiter for BASS.
+                // Which stages exist is fixed at creation; BASS only enables or disables them.
                 DynamicsProcessing.Config cfg = new DynamicsProcessing.Config.Builder(
                         DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2,
-                        true, N, false, 0, false, 0, false).build();
+                        true, N, true, 2, false, 0, true).build();
                 cfg.setPreEqAllChannelsTo(new DynamicsProcessing.Eq(true, true, N));
                 for (int i = 0; i < N; i++) {
                     cfg.setPreEqBandAllChannelsTo(i, new DynamicsProcessing.EqBand(true, cutoff(i), g[i]));
                 }
+                int level = bass(c);
+                cfg.setMbcAllChannelsTo(new DynamicsProcessing.Mbc(true, level > 0, 2));
+                cfg.setMbcBandAllChannelsTo(0, lowBand(level));
+                cfg.setMbcBandAllChannelsTo(1, passBand(20000f));
+                cfg.setLimiterAllChannelsTo(limiter(level));
                 DynamicsProcessing dp = new DynamicsProcessing(0, session, cfg);
                 dp.setEnabled(true);
                 control.put(session, dp.hasControl());
@@ -373,7 +469,7 @@ final class Eq {
     private static AudioEffect createEqualizer(Context c, int session, float[] g) {
         try {
             Equalizer eq = new Equalizer(0, session);
-            apply(eq, g);
+            apply(eq, g, bass(c));
             eq.setEnabled(true);
             control.put(session, eq.hasControl());
             watchControl(c, session, eq);
@@ -399,7 +495,8 @@ final class Eq {
             Diag.note(app, "session " + session + ": 制御権を" + (granted ? "取り戻した" : "失った（ほかのアプリが優先）"));
             control.put(session, granted);
             if (granted) {
-                apply(effect, gainsDb(app));
+                apply(effect, gainsDb(app), bass(app));
+                if (effect instanceof DynamicsProcessing) applyBass((DynamicsProcessing) effect, bass(app));
             } else if (session == GLOBAL && effect instanceof DynamicsProcessing && effects.get(GLOBAL) == effect) {
                 // On the whole output the engine is shared with whoever took it (volzz, a
                 // vendor tool): keep out of their settings and move to a different kind.
@@ -414,7 +511,7 @@ final class Eq {
         });
     }
 
-    private static void apply(AudioEffect fx, float[] g) {
+    private static void apply(AudioEffect fx, float[] g, int bassLevel) {
         try {
             if (fx instanceof DynamicsProcessing) {
                 DynamicsProcessing dp = (DynamicsProcessing) fx;
@@ -425,7 +522,8 @@ final class Eq {
                 Equalizer eq = (Equalizer) fx;
                 short[] range = eq.getBandLevelRange();
                 for (short b = 0; b < eq.getNumberOfBands(); b++) {
-                    int mb = Math.round(curveAt(g, eq.getCenterFreq(b) / 1000f) * 100);
+                    float hz = eq.getCenterFreq(b) / 1000f;
+                    int mb = Math.round((curveAt(g, hz) + shelf(hz, bassLevel)) * 100);
                     eq.setBandLevel(b, (short) Math.max(range[0], Math.min(range[1], mb)));
                 }
             }

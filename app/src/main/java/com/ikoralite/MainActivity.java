@@ -9,7 +9,9 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.content.res.ColorStateList;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.media.audiofx.AudioEffect;
 import android.net.Uri;
 import android.os.Build;
@@ -22,6 +24,7 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.StyleSpan;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -61,6 +64,9 @@ public class MainActivity extends Activity {
     private Button playerInfo;
     private LinearLayout presets;
     private BandsView bands;
+    private LinearLayout bassRow;
+    /** The theme's button text colours, restored on the levels not selected. */
+    private ColorStateList bassText;
     private RadioGroup picker;
     private RadioButton pickSelf;
     /** Set while the code, not the user, moves the switch or the picker. */
@@ -196,6 +202,41 @@ public class MainActivity extends Activity {
         });
         col.addView(bands);
         buildPresets();
+
+        LinearLayout bassBox = new LinearLayout(this);
+        bassBox.setGravity(Gravity.CENTER_VERTICAL);
+        bassBox.setPadding(0, dp(8), 0, 0);
+        TextView bassLabel = new TextView(this);
+        bassLabel.setText("BASS");
+        bassLabel.setTypeface(Typeface.DEFAULT_BOLD);
+        bassLabel.setPadding(0, 0, dp(8), 0);
+        bassBox.addView(bassLabel);
+        bassRow = new LinearLayout(this);
+        for (int level = 0; level <= Eq.BASS_MAX; level++) {
+            Button b = new Button(this);
+            b.setText(level == 0 ? "OFF" : String.valueOf(level));
+            b.setAllCaps(false);
+            b.setMinWidth(0);
+            b.setMinimumWidth(0);
+            // Fixed 40dp height: drop the theme's padding and minimum height, or the text is clipped.
+            b.setPadding(0, 0, 0, 0);
+            b.setMinHeight(0);
+            b.setMinimumHeight(0);
+            b.setGravity(Gravity.CENTER);
+            if (level == 0) bassText = b.getTextColors();
+            int l = level;
+            b.setOnClickListener(v -> {
+                Eq.setBass(this, l);
+                markBass();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(40), 1);
+            lp.setMargins(dp(2), 0, dp(2), 0);
+            bassRow.addView(b, lp);
+        }
+        bassBox.addView(bassRow, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        col.addView(bassBox);
+        col.addView(hint(R.string.bass_hint));
+        markBass();
 
         // --- Folded away: settings, the other equalizers, and debugging ---
         LinearLayout modes = section(col, "動作の設定", "modes");
@@ -364,6 +405,24 @@ public class MainActivity extends Activity {
         return b;
     }
 
+    /**
+     * The selected BASS level stands out in the icon's teal. Backgrounds are drawn here rather
+     * than tinted: this theme's buttons are not tint-based, and clearing a tint left them white.
+     */
+    private void markBass() {
+        int level = Eq.bass(this);
+        for (int i = 0; i < bassRow.getChildCount(); i++) {
+            Button b = (Button) bassRow.getChildAt(i);
+            boolean on = i == level;
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(6));
+            bg.setColor(on ? 0xFF00897B : 0x33808080);
+            b.setBackground(bg);
+            b.setTextColor(on ? ColorStateList.valueOf(0xFFFFFFFF) : bassText);
+            b.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        }
+    }
+
     /** Mark the preset the faders currently match, if any. */
     private void markPresets() {
         int[] now = currentSteps();
@@ -453,6 +512,8 @@ public class MainActivity extends Activity {
         bands.setEnabled(on);
         for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(on);
         markPresets();
+        for (int i = 0; i < bassRow.getChildCount(); i++) bassRow.getChildAt(i).setEnabled(on);
+        bassRow.setAlpha(on ? 1f : 0.3f);
         presets.setAlpha(on ? 1f : 0.3f);
         if (on) {
             picker.check(pickSelf.getId());
