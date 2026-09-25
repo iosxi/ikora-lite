@@ -1,16 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- All three are install-time (normal) permissions: no dialog is ever shown. -->
+    <!-- These three are install-time (normal) permissions: no dialog is ever shown. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Optional, never granted at install: only `adb shell pm grant com.ikoralite
+         android.permission.DUMP` enables it. Lets the screen read which effects audioserver
+         runs, in which order. Everything else works without it. -->
+    <uses-permission
+        android:name="android.permission.DUMP"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- Not permissions: only makes these kinds of apps visible, for names and the picker. -->
     <queries>
         <!-- Other equalizer apps, listed in the picker. -->
         <intent>
             <action android:name="android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL" />
+        </intent>
+        <!-- Apps with a home-screen icon, so an effect's owner can be shown by name. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <!-- Music players, so a session can be shown by the player's name. -->
         <intent>

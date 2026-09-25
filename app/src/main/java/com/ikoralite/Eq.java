@@ -7,8 +7,10 @@ import android.media.audiofx.DynamicsProcessing;
 import android.media.audiofx.Equalizer;
 import android.util.Log;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The whole equalizer: settings, and one effect per audio session a player has opened.
@@ -18,8 +20,11 @@ import java.util.Map;
 final class Eq {
     static final String TAG = "ikora";
 
-    /** Band centres in Hz. Gains are stored in half-dB steps, -24..+24 (±12 dB). */
-    static final int[] FREQ = {31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    /**
+     * Band centres in Hz: 31 Hz to 16 kHz in equal steps on a log scale, so the middle
+     * band (700 Hz) is the log-centre. Gains are stored in half-dB steps, -24..+24 (±12 dB).
+     */
+    static final int[] FREQ = {31, 88, 250, 700, 2000, 5600, 16000};
     static final int N = FREQ.length;
     static final int STEPS = 24;
 
@@ -41,14 +46,14 @@ final class Eq {
         return prefs(c).getBoolean("on", true);
     }
 
+    /** Keys are "g0".. so the 10-band values of v1–v2 ("b0"..) are not misread. */
     static int step(Context c, int band) {
-        return prefs(c).getInt("b" + band, 0);
+        return prefs(c).getInt("g" + band, 0);
     }
 
     static float[] gainsDb(Context c) {
-        SharedPreferences p = prefs(c);
         float[] g = new float[N];
-        for (int i = 0; i < N; i++) g[i] = p.getInt("b" + i, 0) / 2f;
+        for (int i = 0; i < N; i++) g[i] = step(c, i) / 2f;
         return g;
     }
 
@@ -61,10 +66,7 @@ final class Eq {
             }
         }
         sessions.put(session, pkg);
-        if (isOn(c) && !effects.containsKey(session)) {
-            AudioEffect fx = create(session, gainsDb(c));
-            if (fx != null) effects.put(session, fx);
-        }
+        attachMissing(c);
         changed();
     }
 
@@ -78,12 +80,7 @@ final class Eq {
     static void setOn(Context c, boolean on) {
         prefs(c).edit().putBoolean("on", on).apply();
         if (on) {
-            float[] g = gainsDb(c);
-            for (int s : sessions.keySet()) {
-                if (effects.containsKey(s)) continue;
-                AudioEffect fx = create(s, g);
-                if (fx != null) effects.put(s, fx);
-            }
+            attachMissing(c);
         } else {
             for (AudioEffect fx : effects.values()) fx.release();
             effects.clear();
@@ -91,29 +88,53 @@ final class Eq {
         changed();
     }
 
+    /**
+     * Attach to every open session that has no effect yet. An attach fails while another
+     * app's DynamicsProcessing holds the session, so this is retried while the screen is open.
+     * Returns whether anything new got attached.
+     */
+    static boolean attachMissing(Context c) {
+        if (!isOn(c)) return false;
+        boolean any = false;
+        float[] g = null;
+        for (int s : sessions.keySet()) {
+            if (effects.containsKey(s)) continue;
+            if (g == null) g = gainsDb(c);
+            AudioEffect fx = create(s, g);
+            if (fx != null) {
+                effects.put(s, fx);
+                any = true;
+            }
+        }
+        return any;
+    }
+
     static void setSteps(Context c, int[] steps) {
         SharedPreferences.Editor e = prefs(c).edit();
-        for (int i = 0; i < N; i++) e.putInt("b" + i, steps[i]);
+        for (int i = 0; i < N; i++) e.putInt("g" + i, steps[i]);
         e.apply();
-        float[] g = gainsDb(c);
-        for (AudioEffect fx : effects.values()) apply(fx, g);
+        applyAll(c);
     }
 
     static void setStep(Context c, int band, int step) {
-        prefs(c).edit().putInt("b" + band, step).apply();
+        prefs(c).edit().putInt("g" + band, step).apply();
+        applyAll(c);
+    }
+
+    private static void applyAll(Context c) {
         float[] g = gainsDb(c);
         for (AudioEffect fx : effects.values()) apply(fx, g);
     }
 
-    /** Whether any attached effect has lost control to another app's effect. */
-    static boolean anyOverridden() {
-        for (AudioEffect fx : effects.values()) {
-            try {
-                if (!fx.hasControl()) return true;
-            } catch (RuntimeException ignored) {
-            }
+    /** Whether ikora's effect on this session is attached and actually in control. */
+    static boolean working(int session) {
+        AudioEffect fx = effects.get(session);
+        if (fx == null) return false;
+        try {
+            return fx.hasControl();
+        } catch (RuntimeException e) {
+            return false;
         }
-        return false;
     }
 
     private static void changed() {
@@ -124,27 +145,49 @@ final class Eq {
 
     /** Upper edge of each band: halfway (geometrically) to the next centre. */
     private static float cutoff(int i) {
-        return i == N - 1 ? 20000f : (float) (FREQ[i] * Math.sqrt(2));
+        return i == N - 1 ? 20000f : (float) Math.sqrt((double) FREQ[i] * FREQ[i + 1]);
+    }
+
+    private static Boolean hasDp;
+    private static final Set<Integer> blocked = new HashSet<>();
+
+    /** Whether this device has DynamicsProcessing at all (every Android 9+ build should). */
+    private static boolean deviceHasDp() {
+        if (hasDp == null) {
+            hasDp = false;
+            for (AudioEffect.Descriptor d : AudioEffect.queryEffects()) {
+                if (AudioEffect.EFFECT_TYPE_DYNAMICS_PROCESSING.equals(d.type)) hasDp = true;
+            }
+        }
+        return hasDp;
     }
 
     private static AudioEffect create(int session, float[] g) {
-        // DynamicsProcessing (API 28+) gives the same 10 bands on every device.
-        try {
-            DynamicsProcessing.Config cfg = new DynamicsProcessing.Config.Builder(
-                    DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2,
-                    true, N, false, 0, false, 0, false).build();
-            cfg.setPreEqAllChannelsTo(new DynamicsProcessing.Eq(true, true, N));
-            for (int i = 0; i < N; i++) {
-                cfg.setPreEqBandAllChannelsTo(i, new DynamicsProcessing.EqBand(true, cutoff(i), g[i]));
+        if (deviceHasDp()) {
+            // The same bands on every device. If another app's DynamicsProcessing already
+            // holds this session with a higher priority, setting our config fails: report
+            // that instead of stacking a second equalizer on top.
+            try {
+                DynamicsProcessing.Config cfg = new DynamicsProcessing.Config.Builder(
+                        DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2,
+                        true, N, false, 0, false, 0, false).build();
+                cfg.setPreEqAllChannelsTo(new DynamicsProcessing.Eq(true, true, N));
+                for (int i = 0; i < N; i++) {
+                    cfg.setPreEqBandAllChannelsTo(i, new DynamicsProcessing.EqBand(true, cutoff(i), g[i]));
+                }
+                DynamicsProcessing dp = new DynamicsProcessing(0, session, cfg);
+                dp.setEnabled(true);
+                Log.i(TAG, "session " + session + ": DynamicsProcessing attached");
+                return dp;
+            } catch (RuntimeException e) {
+                // Retried every few seconds while the screen is open: say it once.
+                if (blocked.add(session)) {
+                    Log.w(TAG, "session " + session + ": DynamicsProcessing not attached: " + e.getMessage());
+                }
+                return null;
             }
-            DynamicsProcessing dp = new DynamicsProcessing(0, session, cfg);
-            dp.setEnabled(true);
-            Log.i(TAG, "session " + session + ": DynamicsProcessing attached");
-            return dp;
-        } catch (RuntimeException e) {
-            Log.w(TAG, "session " + session + ": DynamicsProcessing failed, falling back", e);
         }
-        // Fallback: the device's own Equalizer, fed with our curve at its band centres.
+        // No DynamicsProcessing: the device's own Equalizer, fed with our curve.
         try {
             Equalizer eq = new Equalizer(0, session);
             apply(eq, g);
@@ -152,7 +195,7 @@ final class Eq {
             Log.i(TAG, "session " + session + ": Equalizer attached (" + eq.getNumberOfBands() + " bands)");
             return eq;
         } catch (RuntimeException e) {
-            Log.w(TAG, "session " + session + ": Equalizer failed", e);
+            Log.w(TAG, "session " + session + ": Equalizer not attached: " + e.getMessage());
             return null;
         }
     }
@@ -173,8 +216,8 @@ final class Eq {
                 }
             }
         } catch (RuntimeException e) {
-            // Another app's effect has control of this session; ours stays attached but idle.
-            Log.w(TAG, "apply failed", e);
+            // Another app's effect has taken control of this session.
+            Log.w(TAG, "apply failed: " + e.getMessage());
         }
     }
 
