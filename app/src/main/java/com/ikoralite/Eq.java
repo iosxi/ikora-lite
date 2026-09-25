@@ -221,16 +221,14 @@ final class Eq {
 
     /**
      * Called once per process start: re-attach to the sessions saved by the previous process.
-     * Only while music is playing: a CLOSE sent while ikora was dead was missed, so a saved
-     * session with nothing playing is most likely over.
+     * Also while nothing plays: an update is usually installed with the music paused, and a
+     * paused player resumes the same session without announcing it again (seen on the Xperia),
+     * so dropping it here meant force-stopping the player after every update. A session that
+     * did end meanwhile is harmless to attach to, and is replaced by the player's next one.
      */
     static void restore(Context c) {
         String saved = prefs(c).getString("sessions", "");
         if (saved.isEmpty()) return;
-        if (!Diag.mediaPlaying(c)) {
-            prefs(c).edit().remove("sessions").apply();
-            return;
-        }
         for (String item : saved.split(";")) {
             int colon = item.indexOf(':');
             if (colon <= 0) continue;

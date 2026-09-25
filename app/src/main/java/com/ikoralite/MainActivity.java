@@ -685,6 +685,9 @@ public class MainActivity extends Activity {
             String player = label(e.getValue());
             if (!Eq.isOn(this)) {
                 sb.append("ikora はオフ（").append(player).append(" を再生中）");
+            } else if (Eq.working(e.getKey()) && !Diag.mediaPlaying(this)) {
+                // Attached (possibly restored after an update) but nothing sounds right now.
+                bold(sb, "✓ " + player + " に付いています（再生を待っています）");
             } else if (Eq.working(e.getKey())) {
                 bold(sb, "✓ " + player + " に ikora が効いています");
             } else {
