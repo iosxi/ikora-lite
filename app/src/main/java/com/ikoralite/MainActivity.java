@@ -2,8 +2,10 @@ package com.ikoralite;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -23,26 +25,21 @@ import android.text.style.StyleSpan;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends Activity {
-
-    /** name, then one step (half dB) per band: 31, 88, 250, 700, 2k, 5.6k, 16k Hz. */
-    private static final Object[][] PRESETS = {
-            {"フラット", new int[]{0, 0, 0, 0, 0, 0, 0}},
-            {"低音", new int[]{10, 7, 3, 0, 0, 0, 0}},
-            {"高音", new int[]{0, 0, 0, 0, 3, 7, 10}},
-            {"声", new int[]{-4, -2, 2, 5, 4, 0, -2}},
-    };
 
     /** How often the open screen re-reads the chain and retries a blocked attach. */
     private static final long POLL_MS = 2000;
@@ -101,7 +98,7 @@ public class MainActivity extends Activity {
         Eq.listener = () -> runOnUiThread(this::refresh);
         refresh();
         poll.run();
-        if (!canDump()) probe();
+        if (!canDump() && isOpen("detail")) probe(null);
     }
 
     @Override
@@ -154,6 +151,7 @@ public class MainActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(pad, pad, pad, pad);
 
+        // --- Always visible: what is used every day ---
         power = new Switch(this);
         power.setText(R.string.app_name);
         power.setTextSize(20);
@@ -163,6 +161,35 @@ public class MainActivity extends Activity {
         });
         col.addView(power);
 
+        status = new TextView(this);
+        status.setTextSize(16);
+        status.setPadding(0, dp(4), 0, dp(8));
+        col.addView(status);
+
+        col.addView(batteryHint());
+
+        presets = new LinearLayout(this);
+        HorizontalScrollView presetScroll = new HorizontalScrollView(this);
+        presetScroll.setHorizontalScrollBarEnabled(false);
+        presetScroll.setPadding(0, dp(12), 0, 0);
+        presetScroll.addView(presets);
+        col.addView(presetScroll);
+        TextView presetHint = new TextView(this);
+        presetHint.setText(R.string.preset_hint);
+        presetHint.setTextSize(12);
+        col.addView(presetHint);
+
+        bands = new BandsView(this);
+        bands.setSteps(currentSteps());
+        bands.setOnChange((band, step) -> {
+            Eq.setStep(this, band, step);
+            markPresets();
+        });
+        col.addView(bands);
+        buildPresets();
+
+        // --- Folded away: settings, the other equalizers, and debugging ---
+        LinearLayout modes = section(col, "動作の設定", "modes");
         global = new Switch(this);
         global.setText(R.string.global_mode);
         global.setOnCheckedChangeListener((b, on) -> {
@@ -173,13 +200,8 @@ public class MainActivity extends Activity {
             if (on) askNotifications();
             refresh();
         });
-        col.addView(global);
-        TextView globalHint = new TextView(this);
-        globalHint.setText(R.string.global_hint);
-        globalHint.setTextSize(12);
-        globalHint.setPadding(0, 0, 0, dp(8));
-        col.addView(globalHint);
-
+        modes.addView(global);
+        modes.addView(hint(R.string.global_hint));
         resident = new Switch(this);
         resident.setText(R.string.resident_mode);
         resident.setOnCheckedChangeListener((b, on) -> {
@@ -190,63 +212,26 @@ public class MainActivity extends Activity {
             if (on) askNotifications();
             refresh();
         });
-        col.addView(resident);
-        TextView residentHint = new TextView(this);
-        residentHint.setText(R.string.resident_hint);
-        residentHint.setTextSize(12);
-        residentHint.setPadding(0, 0, 0, dp(8));
-        col.addView(residentHint);
+        modes.addView(resident);
+        modes.addView(hint(R.string.resident_hint));
 
-        status = new TextView(this);
-        status.setTextSize(16);
-        status.setPadding(0, dp(4), 0, dp(8));
-        col.addView(status);
+        section(col, "使うイコライザ", "picker").addView(picker());
 
+        LinearLayout detail = section(col, "詳しい状態", "detail");
         chainView = new TextView(this);
         chainView.setPadding(dp(12), dp(8), dp(12), dp(8));
         chainView.setBackgroundColor(0x14808080);
-        col.addView(chainView);
+        detail.addView(chainView);
         probeButton = new Button(this);
         probeButton.setText("ほかの効果をもう一度調べる");
         probeButton.setAllCaps(false);
-        probeButton.setOnClickListener(v -> probe());
-        col.addView(probeButton);
+        probeButton.setOnClickListener(v -> probe(null));
+        detail.addView(probeButton);
 
-        col.addView(batteryHint());
-
-        presets = new LinearLayout(this);
-        presets.setPadding(0, dp(12), 0, dp(4));
-        for (Object[] p : PRESETS) {
-            Button b = new Button(this);
-            b.setText((String) p[0]);
-            b.setAllCaps(false);
-            b.setMinWidth(0);
-            b.setMinimumWidth(0);
-            b.setMaxLines(1);
-            b.setPadding(dp(2), b.getPaddingTop(), dp(2), b.getPaddingBottom());
-            int[] steps = (int[]) p[1];
-            b.setOnClickListener(v -> {
-                Eq.setSteps(this, steps);
-                bands.setSteps(steps);
-            });
-            presets.addView(b, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        }
-        col.addView(presets);
-
-        bands = new BandsView(this);
-        int[] steps = new int[Eq.N];
-        for (int i = 0; i < Eq.N; i++) steps[i] = Eq.step(this, i);
-        bands.setSteps(steps);
-        bands.setOnChange((band, step) -> Eq.setStep(this, band, step));
-        col.addView(bands);
-
-        col.addView(heading("使うイコライザ"));
-        col.addView(picker());
-
-        col.addView(heading("診断"));
+        LinearLayout diag = section(col, "診断", "diag");
         diagView = new TextView(this);
         diagView.setTextSize(12);
-        col.addView(diagView);
+        diag.addView(diagView);
         Button test = new Button(this);
         test.setText("受信テスト（知らせが ikora に届くか）");
         test.setAllCaps(false);
@@ -255,12 +240,12 @@ public class MainActivity extends Activity {
             // Delivery takes milliseconds; show whatever arrived after a moment.
             main.postDelayed(this::refresh, 1500);
         });
-        col.addView(test);
+        diag.addView(test);
         Button send = new Button(this);
         send.setText("診断情報を送る");
         send.setAllCaps(false);
         send.setOnClickListener(v -> sendReport());
-        col.addView(send);
+        diag.addView(send);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(col);
@@ -271,6 +256,176 @@ public class MainActivity extends Activity {
             return in.consumeSystemWindowInsets();
         });
         return scroll;
+    }
+
+    // --- Accordion ------------------------------------------------------------------------
+
+    private SharedPreferences ui() {
+        return getSharedPreferences("ui", MODE_PRIVATE);
+    }
+
+    private boolean isOpen(String key) {
+        return ui().getBoolean("open_" + key, false);
+    }
+
+    /** A header that folds its body away; closed by default, and remembered. */
+    private LinearLayout section(LinearLayout parent, String title, String key) {
+        View rule = new View(this);
+        rule.setBackgroundColor(0x33808080);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        lp.topMargin = dp(16);
+        parent.addView(rule, lp);
+
+        TextView head = new TextView(this);
+        head.setTypeface(Typeface.DEFAULT_BOLD);
+        head.setTextSize(16);
+        head.setPadding(0, dp(12), 0, dp(12));
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        Runnable show = () -> {
+            boolean open = isOpen(key);
+            head.setText((open ? "▾  " : "▸  ") + title);
+            body.setVisibility(open ? View.VISIBLE : View.GONE);
+        };
+        show.run();
+        head.setOnClickListener(v -> {
+            boolean open = !isOpen(key);
+            ui().edit().putBoolean("open_" + key, open).apply();
+            show.run();
+            if (open && key.equals("detail") && !canDump()) probe(null);
+        });
+        parent.addView(head);
+        parent.addView(body);
+        return body;
+    }
+
+    private TextView hint(int text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(12);
+        t.setPadding(0, 0, 0, dp(8));
+        return t;
+    }
+
+    // --- Presets --------------------------------------------------------------------------
+
+    private int[] currentSteps() {
+        int[] steps = new int[Eq.N];
+        for (int i = 0; i < Eq.N; i++) steps[i] = Eq.step(this, i);
+        return steps;
+    }
+
+    /** Built-in presets, then the user's, then the save button. */
+    private void buildPresets() {
+        presets.removeAllViews();
+        for (Presets.Preset p : Presets.BUILT_IN) presets.addView(presetButton(p));
+        for (Presets.Preset p : Presets.user(this)) presets.addView(presetButton(p));
+        Button save = chip("＋ 保存");
+        save.setOnClickListener(v -> askSave());
+        presets.addView(save);
+        markPresets();
+        presets.setEnabled(Eq.isOn(this));
+        for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(Eq.isOn(this));
+    }
+
+    private Button chip(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setMaxLines(1);
+        b.setMinWidth(dp(64));
+        b.setMinimumWidth(dp(64));
+        return b;
+    }
+
+    private Button presetButton(Presets.Preset p) {
+        Button b = chip(p.name);
+        b.setTag(p);
+        b.setOnClickListener(v -> {
+            Eq.setSteps(this, p.steps);
+            bands.setSteps(p.steps);
+            markPresets();
+        });
+        if (!p.builtIn) {
+            b.setOnLongClickListener(v -> {
+                askDelete(p);
+                return true;
+            });
+        }
+        return b;
+    }
+
+    /** Mark the preset the faders currently match, if any. */
+    private void markPresets() {
+        int[] now = currentSteps();
+        for (int i = 0; i < presets.getChildCount(); i++) {
+            View v = presets.getChildAt(i);
+            if (!(v instanceof Button) || !(v.getTag() instanceof Presets.Preset)) continue;
+            Presets.Preset p = (Presets.Preset) v.getTag();
+            // A tick, not a colour: the theme's accent is near white on some devices (Xperia).
+            ((Button) v).setText(p.matches(now) ? "✓ " + p.name : p.name);
+        }
+    }
+
+    private void askSave() {
+        EditText name = new EditText(this);
+        name.setSingleLine(true);
+        name.setHint("名前");
+        name.setText("マイプリセット " + (Presets.user(this).size() + 1));
+        name.selectAll();
+        LinearLayout box = new LinearLayout(this);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        new AlertDialog.Builder(this)
+                .setTitle("今の値をプリセットとして保存")
+                .setView(box)
+                .setPositiveButton("保存", (d, w) -> save(name.getText().toString().trim()))
+                .setNegativeButton("キャンセル", null)
+                .show();
+        name.requestFocus();
+    }
+
+    private void save(String name) {
+        if (name.isEmpty()) {
+            toast("名前を入れてください");
+            return;
+        }
+        if (Presets.isBuiltInName(name)) {
+            toast("「" + name + "」は最初からあるプリセットの名前なので使えません");
+            return;
+        }
+        int[] steps = currentSteps();
+        if (Presets.exists(this, name)) {
+            new AlertDialog.Builder(this)
+                    .setMessage("「" + name + "」はもうあります。今の値で上書きしますか？")
+                    .setPositiveButton("上書き", (d, w) -> {
+                        Presets.save(this, name, steps);
+                        buildPresets();
+                        toast("「" + name + "」を上書きしました");
+                    })
+                    .setNegativeButton("キャンセル", null)
+                    .show();
+            return;
+        }
+        Presets.save(this, name, steps);
+        buildPresets();
+        toast("「" + name + "」を保存しました");
+    }
+
+    private void askDelete(Presets.Preset p) {
+        new AlertDialog.Builder(this)
+                .setMessage("「" + p.name + "」を削除しますか？")
+                .setPositiveButton("削除", (d, w) -> {
+                    Presets.delete(this, p.name);
+                    buildPresets();
+                    toast("「" + p.name + "」を削除しました");
+                })
+                .setNegativeButton("キャンセル", null)
+                .show();
+    }
+
+    private void toast(String s) {
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
     }
 
     private void setOn(boolean on) {
@@ -288,6 +443,7 @@ public class MainActivity extends Activity {
         // Off: the curve stays visible but greyed and untouchable.
         bands.setEnabled(on);
         for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(on);
+        markPresets();
         presets.setAlpha(on ? 1f : 0.3f);
         if (on) {
             picker.check(pickSelf.getId());
@@ -322,7 +478,7 @@ public class MainActivity extends Activity {
     // --- Diagnostics without DUMP ----------------------------------------------------------
 
     /** Probe every open session and the whole-output mix, off the main thread. */
-    private void probe() {
+    private void probe(Runnable then) {
         if (probing) return;
         probing = true;
         Map<Integer, String> targets = new LinkedHashMap<>(Eq.sessions);
@@ -348,6 +504,7 @@ public class MainActivity extends Activity {
             main.post(() -> {
                 probeText = text;
                 probing = false;
+                if (then != null) then.run();
                 // Only changes are worth a line: the record holds 40, and receipts matter more.
                 Diag.noteIfChanged(this, "probe", "他の効果の調査: " + text.replace("\n\n", " / ").replace('\n', ' '));
                 if (resumed) refresh();
@@ -416,6 +573,11 @@ public class MainActivity extends Activity {
     }
 
     private void sendReport() {
+        // The probe touches the chain, so it no longer runs on every open: do it now if needed.
+        if (!canDump() && probeText == null) {
+            probe(this::sendReport);
+            return;
+        }
         String text = Diag.report(this, stateText(), probeText);
         Intent send = new Intent(Intent.ACTION_SEND)
                 .setType("text/plain")

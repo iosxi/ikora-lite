@@ -9,8 +9,9 @@
     <string name="never_received">音楽アプリで再生を「止めてから始め直す」か、音楽アプリを一度終了してから再生してください。それでも変わらなければ、下の「診断情報を送る」で送ってください。</string>
     <string name="global_mode">全体モード（すべての音に効かせる）</string>
     <string name="global_hint">「常駐して待つ」でも知らせが届かないとき（知らせを出さない音楽アプリ）向け。通知音も含め端末の音すべてに効きます。常駐します（ON にするとき、通知の許可を求めます）。</string>
-    <string name="try_global">「常駐して待つ」でも届かない場合は、上の「全体モード」を使ってください。</string>
-    <string name="try_resident">まず上の「常駐して待つ」を ON にしてから、音楽アプリを一度終了して再生し直してください（AQUOS R8 はこれで効きました）。</string>
+    <string name="try_global">「常駐して待つ」でも届かない場合は、下の「動作の設定」にある「全体モード」を使ってください。</string>
+    <string name="try_resident">まず下の「動作の設定」にある「常駐して待つ」を ON にしてから、音楽アプリを一度終了して再生し直してください（AQUOS R8 はこれで効きました）。</string>
     <string name="resident_mode">常駐して待つ</string>
     <string name="resident_hint">音楽アプリの知らせを取りこぼす端末向け（AQUOS R8 で確認）。ikora を常に動かしておきます（Wavelet と同じやり方）。通知欄に小さく表示が出ます（ON にするとき、通知の許可を求めます）。</string>
+    <string name="preset_hint">「＋ 保存」で今の値に名前を付けて保存。自分のプリセットは長押しで削除できます。</string>
 </resources>
