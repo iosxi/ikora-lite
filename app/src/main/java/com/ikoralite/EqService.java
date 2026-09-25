@@ -8,7 +8,6 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.os.IBinder;
-import android.util.Log;
 
 /**
  * Does nothing but stay in the foreground while an effect is attached. Without it the
@@ -28,7 +27,7 @@ public class EqService extends Service {
         } catch (RuntimeException e) {
             // Android 12+ may refuse a start from the background; the effect still works
             // for as long as the process happens to live.
-            Log.w(Eq.TAG, "foreground service not started", e);
+            Diag.note(c, "常駐サービスを起動できない（電池の最適化のため）: " + e.getClass().getSimpleName());
         }
     }
 

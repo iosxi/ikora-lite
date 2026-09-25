@@ -6,4 +6,5 @@
     <string name="idle">音楽アプリで再生を始めると、自動で効きます。</string>
     <string name="battery_hint">再生のたびに確実に効かせるには、下のボタンから「アプリのバッテリー使用量」→「バックグラウンドでの使用を許可」→「制限なし」を選んでください（機種によっては「バッテリー」→「制限なし」）。</string>
     <string name="battery_open">アプリ情報を開く</string>
+    <string name="never_received">音楽アプリで再生を「止めてから始め直す」か、音楽アプリを一度終了してから再生してください。それでも変わらなければ、下の「診断情報を送る」で送ってください。</string>
 </resources>

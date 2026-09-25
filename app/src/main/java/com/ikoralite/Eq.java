@@ -72,6 +72,7 @@ final class Eq {
 
     static void close(int session) {
         sessions.remove(session);
+        errors.remove(session);
         AudioEffect fx = effects.remove(session);
         if (fx != null) fx.release();
         changed();
@@ -100,7 +101,7 @@ final class Eq {
         for (int s : sessions.keySet()) {
             if (effects.containsKey(s)) continue;
             if (g == null) g = gainsDb(c);
-            AudioEffect fx = create(s, g);
+            AudioEffect fx = create(c, s, g);
             if (fx != null) {
                 effects.put(s, fx);
                 any = true;
@@ -152,7 +153,7 @@ final class Eq {
     private static final Set<Integer> blocked = new HashSet<>();
 
     /** Whether this device has DynamicsProcessing at all (every Android 9+ build should). */
-    private static boolean deviceHasDp() {
+    static boolean deviceHasDp() {
         if (hasDp == null) {
             hasDp = false;
             for (AudioEffect.Descriptor d : AudioEffect.queryEffects()) {
@@ -162,7 +163,10 @@ final class Eq {
         return hasDp;
     }
 
-    private static AudioEffect create(int session, float[] g) {
+    /** Why the last attach to each session failed, for the screen and the report. */
+    static final Map<Integer, String> errors = new LinkedHashMap<>();
+
+    private static AudioEffect create(Context c, int session, float[] g) {
         if (deviceHasDp()) {
             // The same bands on every device. If another app's DynamicsProcessing already
             // holds this session with a higher priority, setting our config fails: report
@@ -177,12 +181,16 @@ final class Eq {
                 }
                 DynamicsProcessing dp = new DynamicsProcessing(0, session, cfg);
                 dp.setEnabled(true);
-                Log.i(TAG, "session " + session + ": DynamicsProcessing attached");
+                watchControl(c, session, dp);
+                errors.remove(session);
+                Diag.note(c, "session " + session + ": DynamicsProcessing を付けた（制御権 "
+                        + (dp.hasControl() ? "あり" : "なし") + "）");
                 return dp;
             } catch (RuntimeException e) {
+                errors.put(session, String.valueOf(e.getMessage()));
                 // Retried every few seconds while the screen is open: say it once.
                 if (blocked.add(session)) {
-                    Log.w(TAG, "session " + session + ": DynamicsProcessing not attached: " + e.getMessage());
+                    Diag.note(c, "session " + session + ": DynamicsProcessing を付けられない: " + e);
                 }
                 return null;
             }
@@ -192,12 +200,30 @@ final class Eq {
             Equalizer eq = new Equalizer(0, session);
             apply(eq, g);
             eq.setEnabled(true);
-            Log.i(TAG, "session " + session + ": Equalizer attached (" + eq.getNumberOfBands() + " bands)");
+            watchControl(c, session, eq);
+            errors.remove(session);
+            Diag.note(c, "session " + session + ": DynamicsProcessing が無い端末のため Equalizer を付けた（"
+                    + eq.getNumberOfBands() + " バンド）");
             return eq;
         } catch (RuntimeException e) {
-            Log.w(TAG, "session " + session + ": Equalizer not attached: " + e.getMessage());
+            errors.put(session, String.valueOf(e.getMessage()));
+            if (blocked.add(session)) Diag.note(c, "session " + session + ": Equalizer を付けられない: " + e);
             return null;
         }
+    }
+
+    /**
+     * Another app attaching the same kind of effect later with a higher priority takes the
+     * shared engine over (Poweramp Equalizer uses 1337); ours stays attached but its settings
+     * no longer apply. Record both directions, and re-apply our curve on getting it back.
+     */
+    private static void watchControl(Context c, int session, AudioEffect fx) {
+        Context app = c.getApplicationContext();
+        fx.setControlStatusListener((effect, control) -> {
+            Diag.note(app, "session " + session + ": 制御権を" + (control ? "取り戻した" : "失った（ほかのアプリが優先）"));
+            if (control) apply(effect, gainsDb(app));
+            changed();
+        });
     }
 
     private static void apply(AudioEffect fx, float[] g) {

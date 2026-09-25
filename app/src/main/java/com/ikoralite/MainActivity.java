@@ -31,6 +31,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends Activity {
@@ -49,6 +50,13 @@ public class MainActivity extends Activity {
     private Switch power;
     private TextView status;
     private TextView chainView;
+    private TextView diagView;
+    private Button probeButton;
+    /** Result of the last permission-free probe, null until one has run. */
+    private String probeText;
+    private boolean probing;
+    /** Noted once per screen: music playing without a session broadcast. */
+    private boolean notedSilentPlayer;
     private View battery;
     private LinearLayout presets;
     private BandsView bands;
@@ -91,6 +99,7 @@ public class MainActivity extends Activity {
         Eq.listener = () -> runOnUiThread(this::refresh);
         refresh();
         poll.run();
+        if (!canDump()) probe();
     }
 
     @Override
@@ -151,6 +160,11 @@ public class MainActivity extends Activity {
         chainView.setPadding(dp(12), dp(8), dp(12), dp(8));
         chainView.setBackgroundColor(0x14808080);
         col.addView(chainView);
+        probeButton = new Button(this);
+        probeButton.setText("ほかの効果をもう一度調べる");
+        probeButton.setAllCaps(false);
+        probeButton.setOnClickListener(v -> probe());
+        col.addView(probeButton);
 
         col.addView(batteryHint());
 
@@ -182,6 +196,16 @@ public class MainActivity extends Activity {
 
         col.addView(heading("使うイコライザ"));
         col.addView(picker());
+
+        col.addView(heading("診断"));
+        diagView = new TextView(this);
+        diagView.setTextSize(12);
+        col.addView(diagView);
+        Button send = new Button(this);
+        send.setText("診断情報を送る");
+        send.setAllCaps(false);
+        send.setOnClickListener(v -> sendReport());
+        col.addView(send);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(col);
@@ -233,11 +257,108 @@ public class MainActivity extends Activity {
         syncControls();
         status.setText(summary());
         chainView.setText(chainText());
+        probeButton.setVisibility(canDump() ? View.GONE : View.VISIBLE);
+        probeButton.setEnabled(!probing);
+        diagView.setText(recentEvents());
+    }
+
+    // --- Diagnostics without DUMP ----------------------------------------------------------
+
+    /** Probe every open session and the whole-output mix, off the main thread. */
+    private void probe() {
+        if (probing) return;
+        probing = true;
+        Map<Integer, String> targets = new LinkedHashMap<>(Eq.sessions);
+        Map<Integer, Boolean> ours = new LinkedHashMap<>();
+        Map<Integer, Boolean> working = new LinkedHashMap<>();
+        for (int id : targets.keySet()) {
+            ours.put(id, Eq.effects.containsKey(id));
+            working.put(id, Eq.working(id));
+        }
+        refresh();
+        new Thread(() -> {
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<Integer, String> e : targets.entrySet()) {
+                String found = Probe.run(e.getKey(), ours.get(e.getKey()), working.get(e.getKey()));
+                sb.append(label(e.getValue())).append(" の再生:\n")
+                        .append(found.isEmpty() ? "（ほかの効果なし）" : found).append("\n\n");
+            }
+            String mix = Probe.run(0, false, false);
+            sb.append("全体（全アプリ共通）:\n").append(mix.isEmpty() ? "（ほかの効果なし）" : mix);
+            String text = sb.toString();
+            main.post(() -> {
+                probeText = text;
+                probing = false;
+                Diag.note(this, "他の効果の調査: " + text.replace("\n\n", " / ").replace('\n', ' '));
+                if (resumed) refresh();
+            });
+        }).start();
+    }
+
+    private String recentEvents() {
+        List<String> ev = Diag.events(this);
+        StringBuilder sb = new StringBuilder("最近の出来事（新しい順）:");
+        if (ev.isEmpty()) sb.append("\n（まだ何も起きていません）");
+        for (int i = ev.size() - 1; i >= Math.max(0, ev.size() - 6); i--) sb.append('\n').append(ev.get(i));
+        return sb.toString();
+    }
+
+    /** The screen's state in plain text, for the report. */
+    private String stateText() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("ikora: ").append(Eq.isOn(this) ? "ON" : "OFF").append('\n');
+        sb.append("知らせを受けたことがある: ").append(Diag.everReceived(this) ? "はい" : "いいえ").append('\n');
+        sb.append("電池の最適化: ").append(needsBatteryExemption() ? "あり（常駐できない）" : "なし/不要").append('\n');
+        sb.append("DUMP 許可: ").append(canDump() ? "あり" : "なし").append('\n');
+        sb.append("DynamicsProcessing を持つ端末: ").append(Eq.deviceHasDp() ? "はい" : "いいえ").append('\n');
+        sb.append("イコライザアプリ: ");
+        for (int i = 1; i < picker.getChildCount(); i++) {
+            sb.append(i > 1 ? ", " : "").append(((RadioButton) picker.getChildAt(i)).getText());
+        }
+        sb.append('\n');
+        if (Eq.sessions.isEmpty()) sb.append("再生中のセッション: なし\n");
+        for (Map.Entry<Integer, String> e : Eq.sessions.entrySet()) {
+            int id = e.getKey();
+            sb.append("session ").append(id).append(" (").append(e.getValue()).append("): ")
+                    .append(Eq.working(id) ? "効いている"
+                            : Eq.effects.containsKey(id) ? "付いているが制御権なし" : "付いていない");
+            String err = Eq.errors.get(id);
+            if (err != null) sb.append(" / 理由: ").append(err);
+            sb.append('\n');
+        }
+        sb.append('\n').append(status.getText());
+        return sb.toString();
+    }
+
+    private void sendReport() {
+        String text = Diag.report(this, stateText(), probeText);
+        Intent send = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "ikora 診断情報")
+                .putExtra(Intent.EXTRA_TEXT, text);
+        startActivity(Intent.createChooser(send, "診断情報を送る"));
     }
 
     /** One line per open session: is ikora actually shaping it, and if not, who is. */
     private CharSequence summary() {
-        if (Eq.sessions.isEmpty()) return getString(R.string.idle);
+        if (Eq.sessions.isEmpty()) {
+            if (Diag.mediaPlaying(this)) {
+                // The one case a tester cannot see: the player plays but never tells us.
+                if (!notedSilentPlayer) {
+                    notedSilentPlayer = true;
+                    Diag.note(this, "音楽が再生中なのに、音楽アプリからの知らせが無い");
+                }
+                SpannableStringBuilder sb = new SpannableStringBuilder();
+                bold(sb, "音楽が鳴っていますが、音楽アプリから ikora への知らせが届いていません。");
+                sb.append('\n').append(getString(R.string.never_received));
+                return sb;
+            }
+            if (Diag.everReceived(this)) return getString(R.string.idle);
+            SpannableStringBuilder sb = new SpannableStringBuilder();
+            bold(sb, "音楽アプリからの知らせを、まだ一度も受け取っていません。");
+            sb.append('\n').append(getString(R.string.never_received));
+            return sb;
+        }
         SpannableStringBuilder sb = new SpannableStringBuilder();
         for (Map.Entry<Integer, String> e : Eq.sessions.entrySet()) {
             if (sb.length() > 0) sb.append('\n');
@@ -252,6 +373,11 @@ public class MainActivity extends Activity {
                 sb.append('\n').append(by == null
                         ? "ほかのイコライザが優先されています。そちらを止めると自動で効きます。"
                         : by + " が優先されています。そちらを止めると自動で効きます。");
+                String err = Eq.errors.get(e.getKey());
+                if (err != null) sb.append("\n（理由: ").append(err).append("）");
+                else if (Eq.effects.containsKey(e.getKey())) {
+                    sb.append("\n（理由: ikora が付けたあとで、別のアプリが優先度の高い効果を付けました）");
+                }
             }
         }
         return sb;
@@ -277,7 +403,10 @@ public class MainActivity extends Activity {
         SpannableStringBuilder sb = new SpannableStringBuilder();
         bold(sb, "今の音の流れ（上から順に処理）");
         if (!canDump()) {
-            sb.append("\n詳しく見るには、PC につないで一度だけ次を実行してください:\n")
+            sb.clear();
+            bold(sb, "ほかのアプリの効果（種類だけ）");
+            sb.append('\n').append(probing ? "調べています…" : probeText == null ? "まだ調べていません。" : probeText);
+            sb.append("\n\n持ち主のアプリ名と処理の順番まで見るには、PC から一度だけ次を実行します:\n")
                     .append(Chain.GRANT);
             return sb;
         }
@@ -330,7 +459,7 @@ public class MainActivity extends Activity {
     }
 
     private static String effectName(String n) {
-        if (n.contains("DynamicsProcessing")) return "多バンドEQ";
+        if (n.contains("DynamicsProcessing")) return Probe.DYNAMICS;
         if (n.contains("Equalizer")) return "イコライザ";
         if (n.contains("Bass")) return "低音強調";
         if (n.contains("Virtualizer")) return "バーチャライザ";

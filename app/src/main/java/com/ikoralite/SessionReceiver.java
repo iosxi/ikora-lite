@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.media.audiofx.AudioEffect;
-import android.util.Log;
 
 /** A player said it opened or closed an audio session. */
 public class SessionReceiver extends BroadcastReceiver {
@@ -12,8 +11,10 @@ public class SessionReceiver extends BroadcastReceiver {
     public void onReceive(Context c, Intent i) {
         int session = i.getIntExtra(AudioEffect.EXTRA_AUDIO_SESSION, 0);
         String pkg = i.getStringExtra(AudioEffect.EXTRA_PACKAGE_NAME);
+        String act = i.getAction() == null ? "" : i.getAction().replace("android.media.action.", "");
+        Diag.note(c, "受信 " + act + " session=" + session + " pkg=" + pkg);
         if (session <= 0) return;
-        Log.i(Eq.TAG, i.getAction() + " session=" + session + " pkg=" + pkg);
+        Diag.received(c);
 
         if (AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION.equals(i.getAction())) {
             Eq.open(c, session, pkg);
