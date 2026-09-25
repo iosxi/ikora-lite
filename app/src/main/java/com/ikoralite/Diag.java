@@ -1,5 +1,7 @@
 package com.ikoralite;
 
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
@@ -116,7 +118,7 @@ final class Diag {
         for (AudioPlaybackConfiguration p : am.getActivePlaybackConfigurations()) {
             AudioAttributes a = p.getAudioAttributes();
             String dev = "";
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && p.getAudioDeviceInfo() != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && p.getAudioDeviceInfo() != null) {
                 dev = " → " + p.getAudioDeviceInfo().getProductName();
             }
             out.add(usage(a.getUsage()) + dev);
@@ -145,6 +147,43 @@ final class Diag {
         }
     }
 
+    /**
+     * Why the previous ikora processes ended (Android 11+). Shows whether the device killed
+     * or force-stopped ikora in the background, which would explain missed broadcasts.
+     */
+    static String exits(Context c) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return "（Android 11 未満のため取得できない）\n";
+        StringBuilder sb = new StringBuilder();
+        ActivityManager am = c.getSystemService(ActivityManager.class);
+        SimpleDateFormat f = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT);
+        for (ApplicationExitInfo e : am.getHistoricalProcessExitReasons(null, 0, 6)) {
+            sb.append("- ").append(f.format(new Date(e.getTimestamp()))).append(' ')
+                    .append(exitReason(e.getReason()));
+            if (e.getDescription() != null) sb.append("（").append(e.getDescription()).append("）");
+            sb.append('\n');
+        }
+        return sb.length() == 0 ? "（記録なし）\n" : sb.toString();
+    }
+
+    private static String exitReason(int r) {
+        switch (r) {
+            case ApplicationExitInfo.REASON_USER_REQUESTED: return "強制停止（利用者・設定・端末の管理機能）";
+            case ApplicationExitInfo.REASON_USER_STOPPED: return "利用者による停止";
+            case ApplicationExitInfo.REASON_LOW_MEMORY: return "メモリ不足";
+            case ApplicationExitInfo.REASON_OTHER: return "その他（端末の判断）";
+            case ApplicationExitInfo.REASON_FREEZER: return "凍結中に終了";
+            case ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE: return "資源の使いすぎ";
+            case ApplicationExitInfo.REASON_PACKAGE_UPDATED: return "アプリの更新";
+            case ApplicationExitInfo.REASON_CRASH: return "異常終了";
+            case ApplicationExitInfo.REASON_ANR: return "応答なし";
+            case ApplicationExitInfo.REASON_SIGNALED: return "シグナル";
+            case ApplicationExitInfo.REASON_EXIT_SELF: return "自分で終了";
+            case ApplicationExitInfo.REASON_DEPENDENCY_DIED: return "依存先の終了";
+            case ApplicationExitInfo.REASON_PERMISSION_CHANGE: return "権限の変更";
+            default: return "理由 " + r;
+        }
+    }
+
     /** Everything a tester can paste back: device, settings, platform effects, events. */
     static String report(Context c, String state, String probe) {
         StringBuilder sb = new StringBuilder();
@@ -160,6 +199,7 @@ final class Diag {
         String test = selfTestResult(c);
         sb.append("\n[受信テスト]\n").append(test == null ? "（未実施）" : test).append('\n');
         sb.append("\n[音楽アプリの版]\n").append(players(c));
+        sb.append("\n[ikora の過去の終了理由（新しい順）]\n").append(exits(c));
         sb.append("\n[いま鳴っている音]\n");
         List<String> now = playing(c);
         if (now.isEmpty()) sb.append("（なし）\n");

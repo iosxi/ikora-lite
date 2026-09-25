@@ -18,7 +18,7 @@ public class EqService extends Service {
     /** Start the service if effects are attached, stop it if none are. */
     static void sync(Context c) {
         Intent i = new Intent(c, EqService.class);
-        if (Eq.effects.isEmpty()) {
+        if (!Eq.needsService(c)) {
             c.stopService(i);
             return;
         }
@@ -44,8 +44,14 @@ public class EqService extends Service {
                 .setContentIntent(open)
                 .build();
         startForeground(1, n);
-        if (Eq.effects.isEmpty()) stopSelf();
-        return START_NOT_STICKY;
+        // Restarted by the system or after boot: the effect died with the old process.
+        if (Eq.isGlobal(this)) Eq.attachMissing(this);
+        if (!Eq.needsService(this)) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        // Resident and whole-output modes have no broadcast to bring them back: ask to be restarted.
+        return Eq.isOn(this) && (Eq.isGlobal(this) || Eq.isResident(this)) ? START_STICKY : START_NOT_STICKY;
     }
 
     @Override

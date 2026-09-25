@@ -2,10 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- These three are install-time (normal) permissions: no dialog is ever shown. -->
+    <!-- Install-time (normal) permissions: no dialog is ever shown. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Runtime permission, asked only when "常駐して待つ" or whole-output mode is turned on,
+         so the resident notification is visible (as Wavelet asks). Declining changes nothing
+         else: the service runs either way. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Install-time too. Only used to resume whole-output mode after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Optional, never granted at install: only `adb shell pm grant com.ikoralite
          android.permission.DUMP` enables it. Lets the screen read which effects audioserver
          runs, in which order. Everything else works without it. -->
@@ -65,7 +71,17 @@
             </intent-filter>
         </receiver>
 
-        <!-- Runs only while a session is open, to keep the process (and so the effect) alive. -->
+        <!-- Whole-output mode: resume after reboot or update. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Keeps the process (and so the effect) alive: while a session is open, or always in whole-output mode. -->
         <service
             android:name=".EqService"
             android:exported="false"

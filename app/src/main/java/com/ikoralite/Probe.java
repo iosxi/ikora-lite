@@ -40,28 +40,30 @@ final class Probe {
 
     /**
      * One line per kind found on the session, "" if none.
-     * @param ours    ikora has its own DynamicsProcessing on this session (a probe would
-     *                only join it, so its control status is reported instead)
-     * @param working ikora's own effect there holds control
+     * @param oursType type of ikora's own effect on this session, or null. A probe of that
+     *                 kind would only join ikora's, so its control status is reported instead.
+     * @param working  ikora's own effect there holds control
      */
-    static String run(int session, boolean ours, boolean working) {
+    static String run(int session, UUID oursType, boolean working) {
         boolean[] present = presentKinds();
         StringBuilder sb = new StringBuilder();
         for (int k = 0; k < KINDS.length; k++) {
             if (!present[k]) continue;
             String name = (String) KINDS[k][1];
             Maker maker = (Maker) KINDS[k][2];
+            if (KINDS[k][0].equals(oursType)) {
+                if (!working) line(sb, name, "あり（ほかのアプリが優先。ikora は制御権なし）");
+                continue;
+            }
             if (maker == null) {
-                if (ours) {
-                    if (!working) line(sb, name, "あり（ほかのアプリが優先。ikora は制御権なし）");
-                    continue;
-                }
                 // A config cannot be set without control, so construction itself fails
                 // when another app's DynamicsProcessing is already there.
                 try {
                     new DynamicsProcessing(Integer.MIN_VALUE, session, null).release();
                 } catch (RuntimeException e) {
                     line(sb, name, "あり（ほかのアプリが保持）");
+                    // The half-built probe still holds a handle in audioserver.
+                    Eq.collectOrphans();
                 }
                 continue;
             }

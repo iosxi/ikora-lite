@@ -46,6 +46,53 @@ final class Eq {
         return prefs(c).getBoolean("on", true);
     }
 
+    /** The whole-output session: every app's sound, mixed. */
+    static final int GLOBAL = 0;
+
+    /**
+     * Whole-output mode: one effect on session 0 instead of one per player session. For players
+     * that never announce their sessions (YT Music on AQUOS R8 does not); it then shapes every
+     * sound on the device, and needs the service running all the time.
+     */
+    static boolean isGlobal(Context c) {
+        return prefs(c).getBoolean("global", false);
+    }
+
+    static void setGlobal(Context c, boolean global) {
+        prefs(c).edit().putBoolean("global", global).apply();
+        Diag.note(c, global ? "全体モードにした" : "再生ごとのモードにした");
+        releaseAll();
+        attachMissing(c);
+        changed();
+    }
+
+    private static void releaseAll() {
+        for (Map.Entry<Integer, AudioEffect> e : effects.entrySet()) dispose(e.getKey(), e.getValue());
+        effects.clear();
+        control.clear();
+        errors.clear();
+        blocked.clear();
+        globalDpLost = false;
+    }
+
+    /**
+     * Keep the process (and its runtime receiver) alive all the time, as Wavelet does. For
+     * devices that do not start a dead process for a player's broadcast.
+     */
+    static boolean isResident(Context c) {
+        return prefs(c).getBoolean("resident", false);
+    }
+
+    static void setResident(Context c, boolean resident) {
+        prefs(c).edit().putBoolean("resident", resident).apply();
+        Diag.note(c, resident ? "常駐して待つ: ON" : "常駐して待つ: OFF");
+    }
+
+    /** Whether the service should be running at all. */
+    static boolean needsService(Context c) {
+        return !effects.isEmpty() || (isOn(c) && (isResident(c) || isGlobal(c)));
+    }
+
     /** Keys are "g0".. so the 10-band values of v1–v2 ("b0"..) are not misread. */
     static int step(Context c, int band) {
         return prefs(c).getInt("g" + band, 0);
@@ -72,9 +119,11 @@ final class Eq {
 
     static void close(int session) {
         sessions.remove(session);
+        if (session == GLOBAL) return;
         errors.remove(session);
         AudioEffect fx = effects.remove(session);
-        if (fx != null) fx.release();
+        if (fx != null) dispose(session, fx);
+        control.remove(session);
         changed();
     }
 
@@ -83,8 +132,7 @@ final class Eq {
         if (on) {
             attachMissing(c);
         } else {
-            for (AudioEffect fx : effects.values()) fx.release();
-            effects.clear();
+            releaseAll();
         }
         changed();
     }
@@ -96,6 +144,14 @@ final class Eq {
      */
     static boolean attachMissing(Context c) {
         if (!isOn(c)) return false;
+        if (isGlobal(c)) {
+            // Per-session effects would shape those players twice.
+            if (effects.containsKey(GLOBAL)) return false;
+            AudioEffect fx = globalDpLost ? createEqualizer(c, GLOBAL, gainsDb(c)) : create(c, GLOBAL, gainsDb(c));
+            if (fx == null) return false;
+            effects.put(GLOBAL, fx);
+            return true;
+        }
         boolean any = false;
         float[] g = null;
         for (int s : sessions.keySet()) {
@@ -127,15 +183,34 @@ final class Eq {
         for (AudioEffect fx : effects.values()) apply(fx, g);
     }
 
+    /**
+     * Control per session, as last reported to us. Kept ourselves: on the Xperia, hasControl()
+     * still said true after the listener had reported the loss (volzz took session 0 over).
+     */
+    private static final Map<Integer, Boolean> control = new LinkedHashMap<>();
+
     /** Whether ikora's effect on this session is attached and actually in control. */
     static boolean working(int session) {
+        return effects.containsKey(session) && Boolean.TRUE.equals(control.get(session));
+    }
+
+    /** Type of ikora's effect on the session, or null. */
+    static java.util.UUID typeOn(int session) {
         AudioEffect fx = effects.get(session);
-        if (fx == null) return false;
-        try {
-            return fx.hasControl();
-        } catch (RuntimeException e) {
-            return false;
+        return fx == null ? null : fx.getDescriptor().type;
+    }
+
+    /** How ikora's effect on the session works, for the screen. */
+    static String engineOn(int session) {
+        AudioEffect fx = effects.get(session);
+        if (fx instanceof Equalizer) {
+            try {
+                return "端末標準のイコライザ・" + ((Equalizer) fx).getNumberOfBands() + " バンドで近似";
+            } catch (RuntimeException e) {
+                return "端末標準のイコライザで近似";
+            }
         }
+        return fx == null ? "" : "7 バンド";
     }
 
     private static void changed() {
@@ -150,6 +225,13 @@ final class Eq {
     }
 
     private static Boolean hasDp;
+    /** Session 0's DynamicsProcessing was taken over by another app: use the Equalizer there. */
+    private static boolean globalDpLost;
+
+    static void collectOrphans() {
+        System.gc();
+        System.runFinalization();
+    }
     private static final Set<Integer> blocked = new HashSet<>();
 
     /** Whether this device has DynamicsProcessing at all (every Android 9+ build should). */
@@ -166,7 +248,47 @@ final class Eq {
     /** Why the last attach to each session failed, for the screen and the report. */
     static final Map<Integer, String> errors = new LinkedHashMap<>();
 
+    /**
+     * Release an effect. A DynamicsProcessing engine is shared by every app on the session and
+     * keeps the last settings it was given: flatten ours first, so no curve of ikora's stays
+     * on in someone else's engine (on session 0 that was volzz's).
+     */
+    private static void dispose(int session, AudioEffect fx) {
+        if (fx instanceof DynamicsProcessing && Boolean.TRUE.equals(control.get(session))) {
+            try {
+                for (int i = 0; i < N; i++) {
+                    ((DynamicsProcessing) fx).setPreEqBandAllChannelsTo(i, new DynamicsProcessing.EqBand(true, cutoff(i), 0f));
+                }
+            } catch (RuntimeException ignored) {
+                // Lost control meanwhile: nothing of ours is being applied then.
+            }
+        }
+        fx.release();
+    }
+
+    /**
+     * Whether another app already has a DynamicsProcessing on the session. Found by trying one
+     * at the lowest priority: without control its config cannot be set, so it throws.
+     */
+    private static boolean dpTaken(int session) {
+        try {
+            new DynamicsProcessing(Integer.MIN_VALUE, session, null).release();
+            return false;
+        } catch (RuntimeException e) {
+            collectOrphans();
+            return true;
+        }
+    }
+
     private static AudioEffect create(Context c, int session, float[] g) {
+        // On the whole output a DynamicsProcessing is usually someone's volume tool (volzz)
+        // or the vendor's. Joining it would overwrite their settings with ours, or theirs
+        // ours: do not touch it, use the Equalizer there instead.
+        if (session == GLOBAL && deviceHasDp() && dpTaken(GLOBAL)) {
+            globalDpLost = true;
+            Diag.note(c, "全体: ほかのアプリの DynamicsProcessing があるため、端末標準のイコライザを使う");
+            return createEqualizer(c, session, g);
+        }
         if (deviceHasDp()) {
             // The same bands on every device. If another app's DynamicsProcessing already
             // holds this session with a higher priority, setting our config fails: report
@@ -181,6 +303,7 @@ final class Eq {
                 }
                 DynamicsProcessing dp = new DynamicsProcessing(0, session, cfg);
                 dp.setEnabled(true);
+                control.put(session, dp.hasControl());
                 watchControl(c, session, dp);
                 errors.remove(session);
                 Diag.note(c, "session " + session + ": DynamicsProcessing を付けた（制御権 "
@@ -188,22 +311,34 @@ final class Eq {
                 return dp;
             } catch (RuntimeException e) {
                 errors.put(session, String.valueOf(e.getMessage()));
+                // The constructor failed after audioserver had made our handle: let the
+                // finalizer release it now rather than leave it attached until some later GC.
+                collectOrphans();
                 // Retried every few seconds while the screen is open: say it once.
                 if (blocked.add(session)) {
                     Diag.note(c, "session " + session + ": DynamicsProcessing を付けられない: " + e);
                 }
-                return null;
+                // On a player's session, a DynamicsProcessing we cannot control means another
+                // equalizer shapes it: stacking a second one is wrong. On the whole output it
+                // is usually a volume tool (volzz) or the vendor's; taking it over would break
+                // theirs, so fall back to a different kind of effect instead.
+                if (session != GLOBAL) return null;
             }
         }
-        // No DynamicsProcessing: the device's own Equalizer, fed with our curve.
+        return createEqualizer(c, session, g);
+    }
+
+    /** The device's own Equalizer, fed with our curve. */
+    private static AudioEffect createEqualizer(Context c, int session, float[] g) {
         try {
             Equalizer eq = new Equalizer(0, session);
             apply(eq, g);
             eq.setEnabled(true);
+            control.put(session, eq.hasControl());
             watchControl(c, session, eq);
             errors.remove(session);
-            Diag.note(c, "session " + session + ": DynamicsProcessing が無い端末のため Equalizer を付けた（"
-                    + eq.getNumberOfBands() + " バンド）");
+            Diag.note(c, "session " + session + ": Equalizer を付けた（" + eq.getNumberOfBands()
+                    + " バンドで近似・制御権 " + (eq.hasControl() ? "あり" : "なし") + "）");
             return eq;
         } catch (RuntimeException e) {
             errors.put(session, String.valueOf(e.getMessage()));
@@ -219,9 +354,21 @@ final class Eq {
      */
     private static void watchControl(Context c, int session, AudioEffect fx) {
         Context app = c.getApplicationContext();
-        fx.setControlStatusListener((effect, control) -> {
-            Diag.note(app, "session " + session + ": 制御権を" + (control ? "取り戻した" : "失った（ほかのアプリが優先）"));
-            if (control) apply(effect, gainsDb(app));
+        fx.setControlStatusListener((effect, granted) -> {
+            Diag.note(app, "session " + session + ": 制御権を" + (granted ? "取り戻した" : "失った（ほかのアプリが優先）"));
+            control.put(session, granted);
+            if (granted) {
+                apply(effect, gainsDb(app));
+            } else if (session == GLOBAL && effect instanceof DynamicsProcessing && effects.get(GLOBAL) == effect) {
+                // On the whole output the engine is shared with whoever took it (volzz, a
+                // vendor tool): keep out of their settings and move to a different kind.
+                globalDpLost = true;
+                effects.remove(GLOBAL);
+                control.remove(GLOBAL);
+                effect.release();
+                Diag.note(app, "全体: DynamicsProcessing を手放し、端末標準のイコライザに切り替える");
+                attachMissing(app);
+            }
             changed();
         });
     }

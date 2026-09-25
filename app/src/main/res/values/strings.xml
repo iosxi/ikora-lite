@@ -7,4 +7,9 @@
     <string name="battery_hint">再生のたびに確実に効かせるには、下のボタンから「アプリのバッテリー使用量」→「バックグラウンドでの使用を許可」→「制限なし」を選んでください（機種によっては「バッテリー」→「制限なし」）。</string>
     <string name="battery_open">アプリ情報を開く</string>
     <string name="never_received">音楽アプリで再生を「止めてから始め直す」か、音楽アプリを一度終了してから再生してください。それでも変わらなければ、下の「診断情報を送る」で送ってください。</string>
+    <string name="global_mode">全体モード（すべての音に効かせる）</string>
+    <string name="global_hint">音楽アプリが知らせを出さない端末向け（例: AQUOS の YT Music）。通知音も含め端末の音すべてに効きます。常駐します（ON にするとき、通知の許可を求めます）。</string>
+    <string name="try_global">知らせを出さないアプリもあります。その場合は上の「全体モード」を使ってください。</string>
+    <string name="resident_mode">常駐して待つ</string>
+    <string name="resident_hint">音楽アプリの知らせを取りこぼす端末向け。ikora を常に動かしておきます（Wavelet と同じやり方）。通知欄に小さく表示が出ます（ON にするとき、通知の許可を求めます）。</string>
 </resources>

@@ -1,5 +1,6 @@
 package com.ikoralite;
 
+import android.annotation.SuppressLint;
 import android.app.Application;
 import android.content.Context;
 import android.content.IntentFilter;
@@ -14,8 +15,10 @@ import android.os.Build;
  */
 public class IkoraApp extends Application {
     @Override
+    @SuppressLint("UnspecifiedRegisterReceiverFlag") // before Android 13 there is no such flag
     public void onCreate() {
         super.onCreate();
+        Diag.note(this, "プロセス起動");
         IntentFilter f = new IntentFilter();
         f.addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
         f.addAction(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);

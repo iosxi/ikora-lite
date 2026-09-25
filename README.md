@@ -6,8 +6,9 @@
 
 - 対応: Android 9 (API 28) 〜 最新 (targetSdk 36 / Android 16)
 - 出来上がり: `ikora-lite.apk` — **約 40 KB**
-- 権限: **インストール時に自動で許可されるものが 3 つだけ**
-  （`MODIFY_AUDIO_SETTINGS`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_SPECIAL_USE`）。
+- 権限: **インストール時に自動で許可されるものが 4 つ**
+  （`MODIFY_AUDIO_SETTINGS`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_SPECIAL_USE`、`RECEIVE_BOOT_COMPLETED`）。
+  通知の許可（`POST_NOTIFICATIONS`）は「常駐して待つ」か「全体モード」を ON にしたときだけ求める。
   確認ダイアログは一度も出ない。通知の権限も求めない。
   ほかに **DUMP** を宣言しているが、これはインストールでは許可されず、PC から
   `adb shell pm grant com.ikoralite android.permission.DUMP` を一度実行したときだけ有効になる。
@@ -56,6 +57,19 @@ YouTube Music  → Bluetooth
 ヘッドホン側のイコライザ（Sony Sound Connect など）はヘッドホンの中で処理されるので、
 スマホからは見えない。
 
+## 知らせを取りこぼす端末・知らせを出さない端末
+
+- **常駐して待つ**: ikora を常に動かしておき、動的な受け口で知らせを受ける（Wavelet の通常モードと同じ形）。
+  AQUOS R8 では、YT Music が鳴っているのに ikora に知らせが一度も届かなかった。受信テスト
+  （ikora が前面にいるとき）は届いたので、裏で止まっている ikora を知らせのために起こさない端末だと見ている（未確認）。
+- **全体モード**: 全体（セッション 0）に効果を付ける。知らせが要らない代わりに、端末の音すべてに効く。
+  全体の DynamicsProcessing は他のアプリ（Xperia では volzz の音量調整）と 1 つのエンジンを共有し、
+  後から付けた側が相手の設定を上書きしてしまう。そのため、すでにあれば触らず、
+  端末標準のイコライザ（5 バンドで近似）を使う。ikora の DynamicsProcessing を手放すときは、
+  先に全バンドを 0 dB に戻してから外す。
+- どちらも ON にするときだけ通知の許可を求める（常駐の表示を見せるため。許可しなくても動く）。
+  端末の再起動・アプリの更新のあとは自動で再開する（`RECEIVE_BOOT_COMPLETED`）。
+
 ## うまく動かないとき（診断）
 
 DUMP を許可しなくても、次のものが画面に出る。テスターには「診断情報を送る」で送ってもらう。
@@ -75,8 +89,8 @@ DUMP を許可しなくても、次のものが画面に出る。テスターに
   - 登録の受け口だけ届かない → 端末が裏のアプリへの配達を止めている
 - **二つの受け口**: インストール時に登録する受け口に加え、プロセスが生きている間だけ動的な受け口も置き、
   どちらで受けたかを記録する
-- **診断情報**: 機種、Android の版、上の状態、受信テストの結果、音楽アプリの版、いま鳴っている音、
-  端末が持つ音響効果の一覧、出来事
+- **診断情報**: 機種、Android の版、上の状態（モード・常駐サービス・通知の許可も）、受信テストの結果、
+  音楽アプリの版、ikora の過去の終了理由（Android 11+）、いま鳴っている音、端末が持つ音響効果の一覧、出来事
 
 YT Music（9.38.51, Xperia）は知らせを宛先なしで 1 通だけ送り、`FLAG_RECEIVER_INCLUDE_BACKGROUND`
 付きなので、受信登録している全アプリ（Poweramp Equalizer、Wavelet、MusicFX、ikora）に同時に届く。
@@ -123,6 +137,10 @@ Sony XQ-FS44 / Android 16 (API 36)、YouTube Music で確かめた。
 | 知らせが来ていない再現 (v4) | 再生中に ikora を止めて開くと「音楽が鳴っていますが…届いていません」と出て記録される |
 | 権限なしの調査 (v4) | 全体の DynamicsProcessing（volzz）、YT Music の DynamicsProcessing（Poweramp）を検出。dumpsys と一致 |
 | 診断情報 (v4) | 共有画面のプレビューで全項目を確認 |
+| 全体モード (v6) | volzz の DynamicsProcessing がある全体の段では端末標準のイコライザを使い、volzz は制御権を保つ。YT Music 再生中、そのイコライザは YT Music と同じ出力スレッドの全体の段に入る |
+| 常駐して待つ (v6) | 通知の許可を求め、常駐サービスが動き続け、YT Music の知らせを動的・登録の両方で受信 |
+| 更新後の再開 (v6) | `MY_PACKAGE_REPLACED` を受けて常駐と全体モードが戻る |
+| 後から制御権を奪われた (v6) | 「✗ 効いていません（理由: ikora が付けたあとで…）」。v5 までは `hasControl()` を信じて ✓ と出ていた |
 
 **確かめていないこと**: Android 9〜15 の実機（lint で API の不足は無いことだけ確認）、
 耳で聴いた効き具合、電池「最適化あり」のまま長時間置いたときにプロセスが残るか。

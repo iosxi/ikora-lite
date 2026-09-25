@@ -48,6 +48,8 @@ public class MainActivity extends Activity {
     private static final long POLL_MS = 2000;
 
     private Switch power;
+    private Switch global;
+    private Switch resident;
     private TextView status;
     private TextView chainView;
     private TextView diagView;
@@ -132,6 +134,16 @@ public class MainActivity extends Activity {
         }
     };
 
+    /**
+     * Android 13+: let the resident notification show. Asked only on turning a resident mode
+     * on; the service runs whether or not it is granted.
+     */
+    private void askNotifications() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+    }
+
     private boolean canDump() {
         return checkSelfPermission(Manifest.permission.DUMP) == PackageManager.PERMISSION_GRANTED;
     }
@@ -150,6 +162,40 @@ public class MainActivity extends Activity {
             if (!syncing) setOn(on);
         });
         col.addView(power);
+
+        global = new Switch(this);
+        global.setText(R.string.global_mode);
+        global.setOnCheckedChangeListener((b, on) -> {
+            if (syncing) return;
+            Eq.setGlobal(this, on);
+            // Whole-output mode keeps the service up from here (allowed: we are in front).
+            EqService.sync(this);
+            if (on) askNotifications();
+            refresh();
+        });
+        col.addView(global);
+        TextView globalHint = new TextView(this);
+        globalHint.setText(R.string.global_hint);
+        globalHint.setTextSize(12);
+        globalHint.setPadding(0, 0, 0, dp(8));
+        col.addView(globalHint);
+
+        resident = new Switch(this);
+        resident.setText(R.string.resident_mode);
+        resident.setOnCheckedChangeListener((b, on) -> {
+            if (syncing) return;
+            Eq.setResident(this, on);
+            // Started from here while we are in front, which every Android allows.
+            EqService.sync(this);
+            if (on) askNotifications();
+            refresh();
+        });
+        col.addView(resident);
+        TextView residentHint = new TextView(this);
+        residentHint.setText(R.string.resident_hint);
+        residentHint.setTextSize(12);
+        residentHint.setPadding(0, 0, 0, dp(8));
+        col.addView(residentHint);
 
         status = new TextView(this);
         status.setTextSize(16);
@@ -237,6 +283,8 @@ public class MainActivity extends Activity {
         syncing = true;
         boolean on = Eq.isOn(this);
         power.setChecked(on);
+        global.setChecked(Eq.isGlobal(this));
+        resident.setChecked(Eq.isResident(this));
         // Off: the curve stays visible but greyed and untouchable.
         bands.setEnabled(on);
         for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(on);
@@ -278,12 +326,14 @@ public class MainActivity extends Activity {
         if (probing) return;
         probing = true;
         Map<Integer, String> targets = new LinkedHashMap<>(Eq.sessions);
-        Map<Integer, Boolean> ours = new LinkedHashMap<>();
+        Map<Integer, java.util.UUID> ours = new LinkedHashMap<>();
         Map<Integer, Boolean> working = new LinkedHashMap<>();
         for (int id : targets.keySet()) {
-            ours.put(id, Eq.effects.containsKey(id));
+            ours.put(id, Eq.typeOn(id));
             working.put(id, Eq.working(id));
         }
+        java.util.UUID oursMix = Eq.typeOn(Eq.GLOBAL);
+        boolean workingMix = Eq.working(Eq.GLOBAL);
         refresh();
         new Thread(() -> {
             StringBuilder sb = new StringBuilder();
@@ -292,7 +342,7 @@ public class MainActivity extends Activity {
                 sb.append(label(e.getValue())).append(" の再生:\n")
                         .append(found.isEmpty() ? "（ほかの効果なし）" : found).append("\n\n");
             }
-            String mix = Probe.run(0, false, false);
+            String mix = Probe.run(Eq.GLOBAL, oursMix, workingMix);
             sb.append("全体（全アプリ共通）:\n").append(mix.isEmpty() ? "（ほかの効果なし）" : mix);
             String text = sb.toString();
             main.post(() -> {
@@ -320,6 +370,20 @@ public class MainActivity extends Activity {
     private String stateText() {
         StringBuilder sb = new StringBuilder();
         sb.append("ikora: ").append(Eq.isOn(this) ? "ON" : "OFF").append('\n');
+        sb.append("モード: ").append(Eq.isGlobal(this) ? "全体" : "再生ごと").append('\n');
+        sb.append("常駐して待つ: ").append(Eq.isResident(this) ? "ON" : "OFF").append('\n');
+        sb.append("常駐サービス: ").append(serviceRunning() ? "動いている" : "止まっている").append('\n');
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            sb.append("通知の許可: ").append(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED ? "あり" : "なし").append('\n');
+        }
+        if (Eq.isGlobal(this)) {
+            sb.append("全体の効果: ").append(Eq.working(Eq.GLOBAL) ? "効いている（" + Eq.engineOn(Eq.GLOBAL) + "）"
+                    : Eq.effects.containsKey(Eq.GLOBAL) ? "付いているが制御権なし" : "付いていない");
+            String err = Eq.errors.get(Eq.GLOBAL);
+            if (err != null) sb.append(" / DynamicsProcessing: ").append(err);
+            sb.append('\n');
+        }
         sb.append("知らせを受けたことがある: ").append(Diag.everReceived(this) ? "はい" : "いいえ").append('\n');
         sb.append("電池の最適化: ").append(needsBatteryExemption() ? "あり（常駐できない）" : "なし/不要").append('\n');
         sb.append("DUMP 許可: ").append(canDump() ? "あり" : "なし").append('\n');
@@ -343,6 +407,14 @@ public class MainActivity extends Activity {
         return sb.toString();
     }
 
+    private boolean serviceRunning() {
+        android.app.ActivityManager am = getSystemService(android.app.ActivityManager.class);
+        for (android.app.ActivityManager.RunningServiceInfo r : am.getRunningServices(10)) {
+            if (r.service.getClassName().equals(EqService.class.getName())) return r.foreground;
+        }
+        return false;
+    }
+
     private void sendReport() {
         String text = Diag.report(this, stateText(), probeText);
         Intent send = new Intent(Intent.ACTION_SEND)
@@ -354,6 +426,7 @@ public class MainActivity extends Activity {
 
     /** One line per open session: is ikora actually shaping it, and if not, who is. */
     private CharSequence summary() {
+        if (Eq.isGlobal(this)) return globalSummary();
         if (Eq.sessions.isEmpty()) {
             if (Diag.mediaPlaying(this)) {
                 // The one case a tester cannot see: the player plays but never tells us.
@@ -363,7 +436,8 @@ public class MainActivity extends Activity {
                 }
                 SpannableStringBuilder sb = new SpannableStringBuilder();
                 bold(sb, "音楽が鳴っていますが、音楽アプリから ikora への知らせが届いていません。");
-                sb.append('\n').append(getString(R.string.never_received));
+                sb.append('\n').append(getString(R.string.never_received))
+                        .append('\n').append(getString(R.string.try_global));
                 return sb;
             }
             if (Diag.everReceived(this)) return getString(R.string.idle);
@@ -392,6 +466,23 @@ public class MainActivity extends Activity {
                     sb.append("\n（理由: ikora が付けたあとで、別のアプリが優先度の高い効果を付けました）");
                 }
             }
+        }
+        return sb;
+    }
+
+    private CharSequence globalSummary() {
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        if (!Eq.isOn(this)) {
+            sb.append("ikora はオフ（全体モード）");
+        } else if (Eq.working(Eq.GLOBAL)) {
+            bold(sb, "✓ 全体（すべての音）に ikora が効いています");
+            sb.append("\n").append(Eq.engineOn(Eq.GLOBAL));
+        } else {
+            bold(sb, "✗ 全体に ikora は効いていません");
+            String err = Eq.errors.get(Eq.GLOBAL);
+            sb.append('\n').append(Eq.effects.containsKey(Eq.GLOBAL)
+                    ? "ほかのアプリが優先されています。"
+                    : "付けられませんでした" + (err == null ? "。" : "（" + err + "）。"));
         }
         return sb;
     }
@@ -425,6 +516,17 @@ public class MainActivity extends Activity {
         }
         if (chain == null) {
             sb.append("\n読み込み中…");
+            return sb;
+        }
+        if (Eq.isGlobal(this)) {
+            // One whole-output chain per output thread; show the ones carrying effects.
+            for (Chain.Session s : chain.sessions) {
+                if (s.id != Eq.GLOBAL || s.effects.isEmpty()) continue;
+                sb.append("\n\n");
+                bold(sb, "全体（すべての音）");
+                sb.append("  → ").append(device(s.device));
+                lines(sb, s);
+            }
             return sb;
         }
         if (Eq.sessions.isEmpty()) {

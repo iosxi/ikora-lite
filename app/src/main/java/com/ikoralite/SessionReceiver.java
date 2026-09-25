@@ -1,5 +1,6 @@
 package com.ikoralite;
 
+import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -49,6 +50,7 @@ public class SessionReceiver extends BroadcastReceiver {
     }
 
     /** Send ourselves a broadcast delivered the way a player's is: implicit, same flags. */
+    @SuppressLint("WrongConstant") // INCLUDE_BACKGROUND is hidden, and exactly what players use
     static void sendSelfTest(Context c) {
         Diag.selfTestStart(c);
         Intent i = new Intent(SELF_TEST)
