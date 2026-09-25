@@ -57,6 +57,8 @@ public class MainActivity extends Activity {
     /** Noted once per screen: music playing without a session broadcast. */
     private boolean notedSilentPlayer;
     private View battery;
+    /** Opens the last player's app info, to force-stop it; shown only when a session is missed. */
+    private Button playerInfo;
     private LinearLayout presets;
     private BandsView bands;
     private RadioGroup picker;
@@ -165,6 +167,13 @@ public class MainActivity extends Activity {
         status.setTextSize(16);
         status.setPadding(0, dp(4), 0, dp(8));
         col.addView(status);
+        playerInfo = new Button(this);
+        playerInfo.setAllCaps(false);
+        playerInfo.setVisibility(View.GONE);
+        playerInfo.setOnClickListener(v -> startActivity(new Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", lastPlayer(), null))));
+        col.addView(playerInfo);
 
         col.addView(batteryHint());
 
@@ -469,6 +478,7 @@ public class MainActivity extends Activity {
         battery.setVisibility(needsBatteryExemption() ? View.VISIBLE : View.GONE);
         syncControls();
         status.setText(summary());
+        showPlayerInfo(!Eq.isGlobal(this) && Eq.isOn(this) && Eq.sessions.isEmpty() && Diag.mediaPlaying(this));
         chainView.setText(chainText());
         probeButton.setVisibility(canDump() ? View.GONE : View.VISIBLE);
         probeButton.setEnabled(!probing);
@@ -638,7 +648,30 @@ public class MainActivity extends Activity {
      * for players that never send at all.
      */
     private int nextStep() {
-        return Eq.isResident(this) ? R.string.try_global : R.string.try_resident;
+        return Eq.isResident(this) ? R.string.restart_player : R.string.try_resident;
+    }
+
+    /** The app that last announced a session, if it is still installed; else null. */
+    private String lastPlayer() {
+        String pkg = Eq.prefs(this).getString("lastPlayer", null);
+        if (pkg == null) return null;
+        try {
+            getPackageManager().getApplicationInfo(pkg, 0);
+            return pkg;
+        } catch (PackageManager.NameNotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Music plays but ikora does not know the session: the player announced it while ikora
+     * could not hear (force-stopped, or replaced by an update). Only a new session from the
+     * player helps, so offer the shortest way to force-stop it.
+     */
+    private void showPlayerInfo(boolean missed) {
+        String pkg = missed && Eq.isResident(this) ? lastPlayer() : null;
+        playerInfo.setVisibility(pkg == null ? View.GONE : View.VISIBLE);
+        if (pkg != null) playerInfo.setText(label(pkg) + " のアプリ情報を開く（強制停止へ）");
     }
 
     private CharSequence globalSummary() {

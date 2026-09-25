@@ -41,6 +41,8 @@ public class SessionReceiver extends BroadcastReceiver {
 
         // Both receivers hear the same broadcast; open and close are idempotent.
         if (AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION.equals(i.getAction())) {
+            // Remembered so the screen can point at this app when a later session is missed.
+            if (pkg != null && !pkg.isEmpty()) Eq.prefs(c).edit().putString("lastPlayer", pkg).apply();
             Eq.open(c, session, pkg);
             EqService.sync(c);
         } else if (AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION.equals(i.getAction())) {
