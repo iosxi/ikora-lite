@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ikora</string>
+    <string name="channel">動作中の表示</string>
+    <string name="running">イコライザ動作中</string>
+    <string name="idle">音楽アプリで再生を始めると、自動で効きます。</string>
+    <string name="overridden">⚠ 他のイコライザが優先されています。そちらを止めると効きます。</string>
+    <string name="battery_hint">再生のたびに確実に効かせるには、このアプリの電池の設定を「制限なし」にしてください（アプリ情報 → 電池）。</string>
+    <string name="battery_open">アプリ情報を開く</string>
+</resources>

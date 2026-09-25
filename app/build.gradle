@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Signing lives outside the repository, as in the sibling projects.
+def ks = new Properties()
+def ksFile = rootProject.file("keystore.properties")
+if (ksFile.exists()) {
+    ksFile.withInputStream { ks.load(it) }
+}
+
+android {
+    namespace 'com.ikoralite'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.ikoralite"
+        minSdk 28          // Android 9 (Pie)
+        targetSdk 36       // Android 16
+        versionCode 1
+        versionName "1.0"
+        resConfigs "ja"
+    }
+
+    signingConfigs {
+        release {
+            if (ks.containsKey("storeFile")) {
+                storeFile rootProject.file(ks.getProperty("storeFile"))
+                storePassword ks.getProperty("storePassword")
+                keyAlias ks.getProperty("keyAlias")
+                keyPassword ks.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig ks.containsKey("storeFile") ? signingConfigs.release : null
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/**', 'kotlin/**', '**/*.kotlin_metadata']
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+}
