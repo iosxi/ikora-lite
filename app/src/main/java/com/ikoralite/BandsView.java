@@ -15,6 +15,11 @@ import java.util.Locale;
  * Seven vertical faders drawn as one view. A whole column is the grip: dragging anywhere
  * in it moves that band's knob by the same distance, so there is no thin bar to aim for.
  * The knobs are joined by a line, so the curve itself is visible.
+ *
+ * Left of them, set apart by a rule and drawn in another colour with a square knob, is the
+ * "全体" fader: it sits at the bands' average and moves every band by the same amount, so
+ * the curve keeps its shape. It stops where any band would pass ±12 dB, rather than flatten
+ * the curve against the end.
  */
 final class BandsView extends View {
 
@@ -22,11 +27,23 @@ final class BandsView extends View {
         void onChange(int band, int step);
     }
 
+    /** The "全体" fader moved every band at once. */
+    interface OnShift {
+        void onShift(int[] steps);
+    }
+
+    /** Column of the "全体" fader; the bands take columns 1..N. */
+    private static final int MASTER = -2;
+
     private final int[] steps = new int[Eq.N];
     private OnChange onChange;
+    private OnShift onShift;
     private int dragging = -1;
     private float downY;
     private int downStep;
+    /** The bands when the "全体" drag began, and how far they may move up and down. */
+    private final int[] downSteps = new int[Eq.N];
+    private int shiftUp, shiftDown;
 
     private final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -34,6 +51,10 @@ final class BandsView extends View {
     private final Paint curve = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint zero = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint masterTrack = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint masterKnob = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint masterText = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint rule = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
 
     private final float dp;
@@ -67,10 +88,29 @@ final class BandsView extends View {
         text.setColor(primary);
         text.setTextAlign(Paint.Align.CENTER);
         text.setTextSize(13 * dp * getResources().getConfiguration().fontScale);
+        // Amber, apart from the accent: this one is not a band.
+        masterTrack.setColor(0xFFFFA000);
+        masterTrack.setAlpha(60);
+        masterTrack.setStrokeWidth(18 * dp);
+        masterKnob.setColor(0xFFFFA000);
+        masterText.set(text);
+        masterText.setColor(0xFFE08A00);
+        masterText.setFakeBoldText(true);
+        rule.setColor(secondary);
+        rule.setAlpha(90);
+        rule.setStrokeWidth(1 * dp);
+    }
+
+    void setOnShift(OnShift l) {
+        onShift = l;
     }
 
     void setOnChange(OnChange l) {
         onChange = l;
+    }
+
+    int[] steps() {
+        return steps.clone();
     }
 
     void setSteps(int[] s) {
@@ -103,13 +143,29 @@ final class BandsView extends View {
         return getHeight() - labelH() - 16 * dp;
     }
 
+    private float colW() {
+        return getWidth() / (float) (Eq.N + 1);
+    }
+
+    /** Centre of band i, or of the "全体" fader for MASTER. */
     private float colX(int i) {
-        float w = getWidth() / (float) Eq.N;
-        return w * i + w / 2;
+        int col = i == MASTER ? 0 : i + 1;
+        return colW() * col + colW() / 2;
+    }
+
+    /** The bands' average, in (fractional) steps: where the "全体" knob sits. */
+    private float mean() {
+        float sum = 0;
+        for (int s : steps) sum += s;
+        return sum / Eq.N;
+    }
+
+    private float yAt(float step) {
+        return top() + (bottom() - top()) * (Eq.STEPS - step) / (2f * Eq.STEPS);
     }
 
     private float yOf(int step) {
-        return top() + (bottom() - top()) * (Eq.STEPS - step) / (2f * Eq.STEPS);
+        return yAt(step);
     }
 
     @Override
@@ -124,6 +180,15 @@ final class BandsView extends View {
             else path.lineTo(x, y);
         }
         c.drawPath(path, curve);
+
+        // The "全体" fader: wide pale track, square knob, amber, behind a rule.
+        float mx = colX(MASTER), my = yAt(mean()), k = 12 * dp;
+        c.drawLine(colW(), top() - 8 * dp, colW(), bottom() + 8 * dp, rule);
+        c.drawLine(mx, top(), mx, bottom(), masterTrack);
+        c.drawRoundRect(mx - k * 1.3f, my - k * 0.8f, mx + k * 1.3f, my + k * 0.8f, 3 * dp, 3 * dp, masterKnob);
+        float m = Math.round(mean()) / 2f;
+        c.drawText(m == 0 ? "0" : String.format(Locale.ROOT, "%+.1f", m), mx, labelH(), masterText);
+        c.drawText("全体", mx, getHeight() - labelH() / 2, masterText);
 
         for (int i = 0; i < Eq.N; i++) {
             float x = colX(i), y = yOf(steps[i]);
@@ -146,14 +211,35 @@ final class BandsView extends View {
             case MotionEvent.ACTION_DOWN:
                 // The knob moves with the finger, relative to where it was: a tap alone
                 // changes nothing, so the column can be grabbed anywhere without a jump.
-                dragging = Math.max(0, Math.min(Eq.N - 1, (int) (e.getX() / (getWidth() / (float) Eq.N))));
+                int col = Math.max(0, Math.min(Eq.N, (int) (e.getX() / colW())));
+                dragging = col == 0 ? MASTER : col - 1;
                 downY = e.getY();
-                downStep = steps[dragging];
+                if (dragging == MASTER) {
+                    System.arraycopy(steps, 0, downSteps, 0, Eq.N);
+                    int max = -Eq.STEPS, min = Eq.STEPS;
+                    for (int s : steps) {
+                        max = Math.max(max, s);
+                        min = Math.min(min, s);
+                    }
+                    shiftUp = Eq.STEPS - max;
+                    shiftDown = Eq.STEPS + min;
+                } else {
+                    downStep = steps[dragging];
+                }
                 // Keep a parent ScrollView from stealing the vertical drag.
                 getParent().requestDisallowInterceptTouchEvent(true);
                 return true;
             case MotionEvent.ACTION_MOVE:
-                if (dragging >= 0) {
+                if (dragging == MASTER) {
+                    float perStep = (bottom() - top()) / (2f * Eq.STEPS);
+                    int d = Math.round((downY - e.getY()) / perStep);
+                    d = Math.max(-shiftDown, Math.min(shiftUp, d));
+                    if (downSteps[0] + d != steps[0]) {
+                        for (int i = 0; i < Eq.N; i++) steps[i] = downSteps[i] + d;
+                        invalidate();
+                        if (onShift != null) onShift.onShift(steps.clone());
+                    }
+                } else if (dragging >= 0) {
                     float perStep = (bottom() - top()) / (2f * Eq.STEPS);
                     int s = downStep + Math.round((downY - e.getY()) / perStep);
                     s = Math.max(-Eq.STEPS, Math.min(Eq.STEPS, s));

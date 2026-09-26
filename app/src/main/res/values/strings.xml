@@ -15,6 +15,8 @@
     <string name="resident_hint">音楽アプリの知らせを取りこぼす端末向け（AQUOS R8 で確認）。ikora を常に動かしておきます（Wavelet と同じやり方）。通知欄に小さく表示が出ます（ON にするとき、通知の許可を求めます）。</string>
     <string name="per_output">出力機器ごとに設定を覚える</string>
     <string name="per_output_hint">本体スピーカー・有線イヤホン・Bluetooth の機器（名前ごと）それぞれに、7 バンドと BASS を覚えます。出力が変わると、その機器で最後に使った設定に自動で切り替わります。初めての機器は今の設定から始まります。</string>
+    <string name="devices_hint">機器ごとに、次に鳴らしたときのプリセットと BASS を決めておけます。つながっていない機器にも設定でき、いま使用中の機器はすぐに切り替わります。長押しで設定を消せます。</string>
+    <string name="paired_hint">まだ ikora で鳴らしていない Bluetooth 機器の名前を読むために、「付近のデバイス」の許可を求めます。許可しなくても、一度鳴らした機器はここに出ます。</string>
     <string name="preset_hint">「＋ 保存」で今の値に名前を付けて保存。自分のプリセットは長押しで削除できます。</string>
     <string name="bass_hint">低音を持ち上げます。大きな低音は抑えるので、上げても歪みにくくなります（端末標準のイコライザで代用中は単純な持ち上げ）。</string>
 </resources>

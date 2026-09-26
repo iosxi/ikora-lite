@@ -110,6 +110,7 @@ public class MainActivity extends Activity {
         Eq.listener = () -> runOnUiThread(this::refresh);
         Outputs.check(this);
         refresh();
+        markBass();
         poll.run();
         if (!canDump() && isOpen("detail")) probe(null);
     }
@@ -191,6 +192,11 @@ public class MainActivity extends Activity {
         outputView = new TextView(this);
         outputView.setPadding(0, dp(12), 0, 0);
         col.addView(outputView);
+        Button devices = new Button(this);
+        devices.setText("機器プリセット…");
+        devices.setAllCaps(false);
+        devices.setOnClickListener(v -> startActivity(new Intent(this, DevicesActivity.class)));
+        col.addView(devices);
 
         presets = new LinearLayout(this);
         HorizontalScrollView presetScroll = new HorizontalScrollView(this);
@@ -207,6 +213,10 @@ public class MainActivity extends Activity {
         bands.setSteps(currentSteps());
         bands.setOnChange((band, step) -> {
             Eq.setStep(this, band, step);
+            markPresets();
+        });
+        bands.setOnShift(steps -> {
+            Eq.setSteps(this, steps);
             markPresets();
         });
         col.addView(bands);
@@ -575,6 +585,11 @@ public class MainActivity extends Activity {
             bold(sb, Outputs.activeLabel(this));
             sb.append(" の設定（出力が変わると自動で切り替わります）");
             outputView.setText(sb);
+        }
+        // Also on coming back from 機器プリセット: the current output's values may have been set there.
+        if (key != null && shownOutput != null && !java.util.Arrays.equals(bands.steps(), currentSteps())) {
+            bands.setSteps(currentSteps());
+            markPresets();
         }
         if (key != null && !key.equals(shownOutput) && shownOutput != null) {
             bands.setSteps(currentSteps());

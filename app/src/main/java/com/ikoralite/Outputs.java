@@ -185,16 +185,60 @@ final class Outputs {
     static void remember(Context c) {
         String key = activeKey(c);
         if (key == null || !isEnabled(c)) return;
+        int[] steps = new int[Eq.N];
+        for (int i = 0; i < Eq.N; i++) steps[i] = Eq.step(c, i);
+        save(c, key, steps, Eq.bass(c));
+    }
+
+    // --- Set up ahead of time (the 機器プリセット screen) --------------------------------------
+
+    /** Every output that has settings saved, in no particular order. */
+    static java.util.Set<String> savedKeys(Context c) {
+        return prefs(c).getAll().keySet();
+    }
+
+    /** A Bluetooth device's key, as it will be seen once it plays: by name. */
+    static String btKey(String name) {
+        return "bt:" + name;
+    }
+
+    /** The screen's name for a stored key. */
+    static String labelOf(String key) {
+        if (key.equals("speaker")) return "本体スピーカー";
+        if (key.equals("wired")) return "有線イヤホン";
+        if (key.equals("bt")) return "Bluetooth（名前不明）";
+        if (key.equals("usb")) return "USB";
+        if (key.startsWith("bt:")) return key.substring(3);
+        if (key.startsWith("usb:")) return key.substring(4) + "（USB）";
+        return key;
+    }
+
+    /**
+     * Settings for an output that may not be connected: used the next time it plays. If it is
+     * the output playing now, they apply at once.
+     */
+    static void assign(Context c, String key, int[] steps, int bass) {
+        save(c, key, steps, bass);
+        Diag.note(c, "機器プリセット: 「" + labelOf(key) + "」に割り当て（BASS " + bass + "）");
+        if (isEnabled(c) && key.equals(activeKey(c))) Eq.setAll(c, steps, bass);
+    }
+
+    /** Forget an output's settings: next time it starts from whatever is current then. */
+    static void forget(Context c, String key) {
+        prefs(c).edit().remove(key).apply();
+    }
+
+    private static void save(Context c, String key, int[] steps, int bass) {
         JSONArray s = new JSONArray();
-        for (int i = 0; i < Eq.N; i++) s.put(Eq.step(c, i));
+        for (int v : steps) s.put(v);
         try {
             prefs(c).edit().putString(key, new JSONObject()
-                    .put("steps", s).put("bass", Eq.bass(c)).toString()).apply();
+                    .put("steps", s).put("bass", bass).toString()).apply();
         } catch (JSONException ignored) {
         }
     }
 
-    private static boolean load(Context c, String key, int[] steps, int[] bass) {
+    static boolean load(Context c, String key, int[] steps, int[] bass) {
         String saved = prefs(c).getString(key, null);
         if (saved == null) return false;
         try {

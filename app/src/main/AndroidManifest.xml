@@ -12,6 +12,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Install-time too. Only used to resume whole-output mode after a reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Runtime permission, asked only when 機器プリセット is told to list the paired Bluetooth
+         devices, to show their names before they are next connected. Android 11 and older
+         need only the install-time BLUETOOTH for that. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
     <!-- Optional, never granted at install: only `adb shell pm grant com.ikoralite
          android.permission.DUMP` enables it. Lets the screen read which effects audioserver
          runs, in which order. Everything else works without it. -->
@@ -58,6 +65,10 @@
                 <category android:name="android.intent.category.CATEGORY_CONTENT_MUSIC" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".DevicesActivity"
+            android:exported="false" />
 
         <!-- Players announce the audio session they start and stop playing. -->
         <receiver
