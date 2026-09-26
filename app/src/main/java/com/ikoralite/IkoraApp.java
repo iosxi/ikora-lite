@@ -19,6 +19,9 @@ public class IkoraApp extends Application {
     public void onCreate() {
         super.onCreate();
         Diag.note(this, "プロセス起動");
+        // Before restoring: effects are then created with the current output's settings.
+        Outputs.check(this);
+        Outputs.watch(this);
         Eq.restore(this);
         // May be refused from the background (then the effect lives as long as the process).
         if (!Eq.effects.isEmpty()) EqService.sync(this);

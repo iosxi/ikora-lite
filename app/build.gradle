@@ -17,8 +17,8 @@ android {
         applicationId "com.ikoralite"
         minSdk 28          // Android 9 (Pie)
         targetSdk 36       // Android 16
-        versionCode 12
-        versionName "2.1"
+        versionCode 13
+        versionName "2.2"
         resConfigs "ja"
     }
 

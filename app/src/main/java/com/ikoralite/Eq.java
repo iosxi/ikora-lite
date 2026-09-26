@@ -105,6 +105,11 @@ final class Eq {
 
     static void setBass(Context c, int level) {
         prefs(c).edit().putInt("bass", level).apply();
+        Outputs.remember(c);
+        applyBassAll(c, level);
+    }
+
+    private static void applyBassAll(Context c, int level) {
         for (Map.Entry<Integer, AudioEffect> e : effects.entrySet()) {
             if (e.getValue() instanceof DynamicsProcessing) {
                 DynamicsProcessing dp = (DynamicsProcessing) e.getValue();
@@ -296,12 +301,24 @@ final class Eq {
         SharedPreferences.Editor e = prefs(c).edit();
         for (int i = 0; i < N; i++) e.putInt("g" + i, steps[i]);
         e.apply();
+        Outputs.remember(c);
         applyAll(c);
     }
 
     static void setStep(Context c, int band, int step) {
         prefs(c).edit().putInt("g" + band, step).apply();
+        Outputs.remember(c);
         applyAll(c);
+    }
+
+    /** Bands and BASS at once, as saved for an output: the output changed. */
+    static void setAll(Context c, int[] steps, int bassLevel) {
+        SharedPreferences.Editor e = prefs(c).edit();
+        for (int i = 0; i < N; i++) e.putInt("g" + i, steps[i]);
+        e.putInt("bass", bassLevel).apply();
+        applyAll(c);
+        applyBassAll(c, bassLevel);
+        changed();
     }
 
     private static void applyAll(Context c) {

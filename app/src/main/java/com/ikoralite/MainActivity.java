@@ -50,6 +50,10 @@ public class MainActivity extends Activity {
     private Switch power;
     private Switch global;
     private Switch resident;
+    private Switch perOutput;
+    /** Which output's settings the faders and BASS show. */
+    private TextView outputView;
+    private String shownOutput;
     private TextView status;
     private TextView chainView;
     private TextView diagView;
@@ -104,6 +108,7 @@ public class MainActivity extends Activity {
         super.onResume();
         resumed = true;
         Eq.listener = () -> runOnUiThread(this::refresh);
+        Outputs.check(this);
         refresh();
         poll.run();
         if (!canDump() && isOpen("detail")) probe(null);
@@ -182,6 +187,10 @@ public class MainActivity extends Activity {
         col.addView(playerInfo);
 
         col.addView(batteryHint());
+
+        outputView = new TextView(this);
+        outputView.setPadding(0, dp(12), 0, 0);
+        col.addView(outputView);
 
         presets = new LinearLayout(this);
         HorizontalScrollView presetScroll = new HorizontalScrollView(this);
@@ -264,6 +273,15 @@ public class MainActivity extends Activity {
         });
         modes.addView(resident);
         modes.addView(hint(R.string.resident_hint));
+        perOutput = new Switch(this);
+        perOutput.setText(R.string.per_output);
+        perOutput.setOnCheckedChangeListener((b, on) -> {
+            if (syncing) return;
+            Outputs.setEnabled(this, on);
+            refresh();
+        });
+        modes.addView(perOutput);
+        modes.addView(hint(R.string.per_output_hint));
 
         section(col, "使うイコライザ", "picker").addView(picker());
 
@@ -508,6 +526,7 @@ public class MainActivity extends Activity {
         power.setChecked(on);
         global.setChecked(Eq.isGlobal(this));
         resident.setChecked(Eq.isResident(this));
+        perOutput.setChecked(Outputs.isEnabled(this));
         // Off: the curve stays visible but greyed and untouchable.
         bands.setEnabled(on);
         for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(on);
@@ -538,12 +557,31 @@ public class MainActivity extends Activity {
     private void refresh() {
         battery.setVisibility(needsBatteryExemption() ? View.VISIBLE : View.GONE);
         syncControls();
+        showOutput();
         status.setText(summary());
         showPlayerInfo(!Eq.isGlobal(this) && Eq.isOn(this) && Eq.sessions.isEmpty() && Diag.mediaPlaying(this));
         chainView.setText(chainText());
         probeButton.setVisibility(canDump() ? View.GONE : View.VISIBLE);
         probeButton.setEnabled(!probing);
         diagView.setText(recentEvents());
+    }
+
+    /** Which output the settings are for; on a change of output, show that output's values. */
+    private void showOutput() {
+        String key = Outputs.isEnabled(this) ? Outputs.activeKey(this) : null;
+        outputView.setVisibility(key == null ? View.GONE : View.VISIBLE);
+        if (key != null) {
+            SpannableStringBuilder sb = new SpannableStringBuilder("出力: ");
+            bold(sb, Outputs.activeLabel(this));
+            sb.append(" の設定（出力が変わると自動で切り替わります）");
+            outputView.setText(sb);
+        }
+        if (key != null && !key.equals(shownOutput) && shownOutput != null) {
+            bands.setSteps(currentSteps());
+            markPresets();
+            markBass();
+        }
+        shownOutput = key;
     }
 
     // --- Diagnostics without DUMP ----------------------------------------------------------
@@ -600,6 +638,8 @@ public class MainActivity extends Activity {
         sb.append("ikora: ").append(Eq.isOn(this) ? "ON" : "OFF").append('\n');
         sb.append("モード: ").append(Eq.isGlobal(this) ? "全体" : "再生ごと").append('\n');
         sb.append("常駐して待つ: ").append(Eq.isResident(this) ? "ON" : "OFF").append('\n');
+        sb.append("出力機器ごとに覚える: ").append(Outputs.isEnabled(this)
+                ? "ON（今: " + Outputs.activeLabel(this) + "）" : "OFF").append('\n');
         sb.append("常駐サービス: ").append(serviceRunning() ? "動いている" : "止まっている").append('\n');
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             sb.append("通知の許可: ").append(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)

@@ -13,6 +13,8 @@
     <string name="try_resident">まず下の「動作の設定」にある「常駐して待つ」を ON にしてから、音楽アプリを一度終了して再生し直してください（AQUOS R8 はこれで効きました）。</string>
     <string name="resident_mode">常駐して待つ</string>
     <string name="resident_hint">音楽アプリの知らせを取りこぼす端末向け（AQUOS R8 で確認）。ikora を常に動かしておきます（Wavelet と同じやり方）。通知欄に小さく表示が出ます（ON にするとき、通知の許可を求めます）。</string>
+    <string name="per_output">出力機器ごとに設定を覚える</string>
+    <string name="per_output_hint">本体スピーカー・有線イヤホン・Bluetooth の機器（名前ごと）それぞれに、7 バンドと BASS を覚えます。出力が変わると、その機器で最後に使った設定に自動で切り替わります。初めての機器は今の設定から始まります。</string>
     <string name="preset_hint">「＋ 保存」で今の値に名前を付けて保存。自分のプリセットは長押しで削除できます。</string>
     <string name="bass_hint">低音を持ち上げます。大きな低音は抑えるので、上げても歪みにくくなります（端末標準のイコライザで代用中は単純な持ち上げ）。</string>
 </resources>
