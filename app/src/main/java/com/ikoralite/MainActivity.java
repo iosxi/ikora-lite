@@ -12,6 +12,8 @@ import android.content.pm.ResolveInfo;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioManager;
+import android.media.AudioPlaybackConfiguration;
 import android.media.audiofx.AudioEffect;
 import android.net.Uri;
 import android.os.Build;
@@ -43,9 +45,6 @@ import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends Activity {
-
-    /** How often the open screen re-reads the chain and retries a blocked attach. */
-    private static final long POLL_MS = 2000;
 
     private Switch power;
     private Switch global;
@@ -80,6 +79,10 @@ public class MainActivity extends Activity {
     private boolean resumed;
     /** Last chain read, or null when it cannot be read (no DUMP permission). */
     private Chain chain;
+    private boolean chainReading;
+    private long chainAt;
+    /** Re-reads the chain; shown with DUMP only (without it, {@link #probeButton} is shown). */
+    private Button chainButton;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -103,15 +106,27 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * No polling: the screen is brought up to date on opening, on ikora's own changes
+     * ({@link Eq#listener}) and on players starting or stopping. Polling every 2 s cost more
+     * than the effect itself (XQ-FS44: 246 CPU ticks a minute with the screen open, mostly
+     * redrawing; the effect in audioserver costs about 25).
+     */
     @Override
     protected void onResume() {
         super.onResume();
         resumed = true;
-        Eq.listener = () -> runOnUiThread(this::refresh);
+        Eq.listener = () -> runOnUiThread(() -> {
+            refresh();
+            retrySoon();
+        });
         Outputs.check(this);
+        if (Eq.attachMissing(this)) EqService.sync(this);
         refresh();
         markBass();
-        poll.run();
+        retrySoon();
+        readChain(null);
+        getSystemService(AudioManager.class).registerAudioPlaybackCallback(playback, main);
         if (!canDump() && isOpen("detail")) probe(null);
     }
 
@@ -119,31 +134,70 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         resumed = false;
-        main.removeCallbacks(poll);
+        main.removeCallbacks(retry);
+        getSystemService(AudioManager.class).unregisterAudioPlaybackCallback(playback);
         Eq.listener = null;
     }
 
-    /** While the screen is open only: retry blocked attaches and re-read the chain. */
-    private final Runnable poll = new Runnable() {
+    /** A player started or stopped: whether music plays (and a session was missed) may have changed. */
+    private final AudioManager.AudioPlaybackCallback playback = new AudioManager.AudioPlaybackCallback() {
+        @Override
+        public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
+            if (!resumed) return;
+            refresh();
+            retrySoon();
+        }
+    };
+
+    /** First retry of a blocked attach; each next one waits twice as long, up to the last. */
+    private static final long RETRY_FIRST_MS = 2000;
+    private static final long RETRY_MAX_MS = 20000;
+    private long retryMs;
+
+    /**
+     * Another app's equalizer holds a session and says nothing when it lets go: while the
+     * screen is open, try again now and then (2, 4, 8, 16, then every 20 s) until attached.
+     */
+    private void retrySoon() {
+        main.removeCallbacks(retry);
+        retryMs = RETRY_FIRST_MS;
+        if (Eq.missing(this)) main.postDelayed(retry, retryMs);
+    }
+
+    private final Runnable retry = new Runnable() {
         @Override
         public void run() {
             if (!resumed) return;
-            if (Eq.attachMissing(MainActivity.this)) EqService.sync(MainActivity.this);
-            if (canDump()) {
-                new Thread(() -> {
-                    Chain c = Chain.read();
-                    main.post(() -> {
-                        chain = c;
-                        if (resumed) refresh();
-                    });
-                }).start();
-            } else {
-                chain = null;
+            if (Eq.attachMissing(MainActivity.this)) {
+                EqService.sync(MainActivity.this);
                 refresh();
             }
-            main.postDelayed(this, POLL_MS);
+            if (!Eq.missing(MainActivity.this)) return;
+            retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
+            main.postDelayed(this, retryMs);
         }
     };
+
+    /** Read the chain (a dumpsys run) off the main thread: on opening and on request only. */
+    private void readChain(Runnable then) {
+        if (!canDump()) {
+            chain = null;
+            if (then != null) then.run();
+            return;
+        }
+        chainReading = true;
+        if (resumed) refresh();
+        new Thread(() -> {
+            Chain c = Chain.read();
+            main.post(() -> {
+                chain = c;
+                chainAt = System.currentTimeMillis();
+                chainReading = false;
+                if (resumed) refresh();
+                if (then != null) then.run();
+            });
+        }).start();
+    }
 
     /**
      * Android 13+: let the resident notification show. Asked only on turning a resident mode
@@ -300,6 +354,11 @@ public class MainActivity extends Activity {
         chainView.setPadding(dp(12), dp(8), dp(12), dp(8));
         chainView.setBackgroundColor(0x14808080);
         detail.addView(chainView);
+        chainButton = new Button(this);
+        chainButton.setText("今の音の流れを読み直す");
+        chainButton.setAllCaps(false);
+        chainButton.setOnClickListener(v -> readChain(null));
+        detail.addView(chainButton);
         probeButton = new Button(this);
         probeButton.setText("ほかの効果をもう一度調べる");
         probeButton.setAllCaps(false);
@@ -571,6 +630,8 @@ public class MainActivity extends Activity {
         status.setText(summary());
         showPlayerInfo(!Eq.isGlobal(this) && Eq.isOn(this) && Eq.sessions.isEmpty() && Diag.mediaPlaying(this));
         chainView.setText(chainText());
+        chainButton.setVisibility(canDump() ? View.VISIBLE : View.GONE);
+        chainButton.setEnabled(!chainReading);
         probeButton.setVisibility(canDump() ? View.GONE : View.VISIBLE);
         probeButton.setEnabled(!probing);
         diagView.setText(recentEvents());
@@ -699,11 +760,18 @@ public class MainActivity extends Activity {
     }
 
     private void sendReport() {
-        // The probe touches the chain, so it no longer runs on every open: do it now if needed.
-        if (!canDump() && probeText == null) {
-            probe(this::sendReport);
-            return;
+        // The chain is no longer re-read on its own: read it now, so the report is current.
+        if (canDump()) {
+            readChain(this::sendReportNow);
+        } else if (probeText == null) {
+            // The probe touches the chain, so it no longer runs on every open: do it now if needed.
+            probe(this::sendReportNow);
+        } else {
+            sendReportNow();
         }
+    }
+
+    private void sendReportNow() {
         String text = Diag.report(this, stateText(), probeText);
         Intent send = new Intent(Intent.ACTION_SEND)
                 .setType("text/plain")
@@ -829,6 +897,10 @@ public class MainActivity extends Activity {
     private CharSequence chainText() {
         SpannableStringBuilder sb = new SpannableStringBuilder();
         bold(sb, "今の音の流れ（上から順に処理）");
+        // Read on opening and on the button only: say when, so an old picture is not taken for now.
+        if (chain != null && !chainReading) {
+            sb.append(" ").append(android.text.format.DateFormat.format("H:mm:ss", chainAt)).append(" 時点");
+        }
         if (!canDump()) {
             sb.clear();
             bold(sb, "ほかのアプリの効果（種類だけ）");

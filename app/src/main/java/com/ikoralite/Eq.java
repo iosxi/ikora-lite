@@ -297,6 +297,16 @@ final class Eq {
         return any;
     }
 
+    /** Whether something that should have ikora's effect has none (another app holds it). */
+    static boolean missing(Context c) {
+        if (!isOn(c)) return false;
+        if (isGlobal(c)) return !effects.containsKey(GLOBAL);
+        for (int s : sessions.keySet()) {
+            if (!effects.containsKey(s)) return true;
+        }
+        return false;
+    }
+
     static void setSteps(Context c, int[] steps) {
         SharedPreferences.Editor e = prefs(c).edit();
         for (int i = 0; i < N; i++) e.putInt("g" + i, steps[i]);
