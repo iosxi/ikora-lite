@@ -31,7 +31,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -50,6 +49,9 @@ public class MainActivity extends Activity {
     private Switch global;
     private Switch resident;
     private Switch perOutput;
+    /** Silent players (YouTube), found with DUMP; and what it needs when DUMP is missing. */
+    private Switch watch;
+    private TextView watchHint;
     /** Which output's settings the faders and BASS show. */
     private TextView outputView;
     private String shownOutput;
@@ -65,7 +67,7 @@ public class MainActivity extends Activity {
     private View battery;
     /** Opens the last player's app info, to force-stop it; shown only when a session is missed. */
     private Button playerInfo;
-    private LinearLayout presets;
+    private Flow presets;
     private BandsView bands;
     private LinearLayout bassRow;
     /** The theme's button text colours, restored on the levels not selected. */
@@ -122,6 +124,7 @@ public class MainActivity extends Activity {
         });
         Outputs.check(this);
         if (Eq.attachMissing(this)) EqService.sync(this);
+        Watch.look(this);
         refresh();
         markBass();
         retrySoon();
@@ -252,12 +255,10 @@ public class MainActivity extends Activity {
         devices.setOnClickListener(v -> startActivity(new Intent(this, DevicesActivity.class)));
         col.addView(devices);
 
-        presets = new LinearLayout(this);
-        HorizontalScrollView presetScroll = new HorizontalScrollView(this);
-        presetScroll.setHorizontalScrollBarEnabled(false);
-        presetScroll.setPadding(0, dp(12), 0, 0);
-        presetScroll.addView(presets);
-        col.addView(presetScroll);
+        // Wrapped onto as many rows as needed: all of them in sight, none behind a scroll.
+        presets = new Flow(this);
+        presets.setPadding(0, dp(12), 0, 0);
+        col.addView(presets);
         TextView presetHint = new TextView(this);
         presetHint.setText(R.string.preset_hint);
         presetHint.setTextSize(12);
@@ -337,6 +338,19 @@ public class MainActivity extends Activity {
         });
         modes.addView(resident);
         modes.addView(hint(R.string.resident_hint));
+        watch = new Switch(this);
+        watch.setText(R.string.watch_mode);
+        watch.setOnCheckedChangeListener((b, on) -> {
+            if (syncing) return;
+            Watch.setEnabled(this, on);
+            // It keeps ikora resident: started from here while we are in front.
+            EqService.sync(this);
+            if (on) askNotifications();
+            refresh();
+        });
+        modes.addView(watch);
+        watchHint = hint(R.string.watch_hint);
+        modes.addView(watchHint);
         perOutput = new Switch(this);
         perOutput.setText(R.string.per_output);
         perOutput.setOnCheckedChangeListener((b, on) -> {
@@ -452,11 +466,10 @@ public class MainActivity extends Activity {
         return steps;
     }
 
-    /** Built-in presets, then the user's, then the save button. */
+    /** The user's presets, then the built-in ones, then the save button. */
     private void buildPresets() {
         presets.removeAllViews();
-        for (Presets.Preset p : Presets.BUILT_IN) presets.addView(presetButton(p));
-        for (Presets.Preset p : Presets.user(this)) presets.addView(presetButton(p));
+        for (Presets.Preset p : Presets.all(this)) presets.addView(presetButton(p));
         Button save = chip("＋ 保存");
         save.setOnClickListener(v -> askSave());
         presets.addView(save);
@@ -485,7 +498,7 @@ public class MainActivity extends Activity {
         });
         if (!p.builtIn) {
             b.setOnLongClickListener(v -> {
-                askDelete(p);
+                askEdit(p);
                 return true;
             });
         }
@@ -567,13 +580,19 @@ public class MainActivity extends Activity {
         toast("「" + name + "」を保存しました");
     }
 
-    private void askDelete(Presets.Preset p) {
+    /** Long press on a user preset: bring it up to the current values, or delete it. */
+    private void askEdit(Presets.Preset p) {
         new AlertDialog.Builder(this)
-                .setMessage("「" + p.name + "」を削除しますか？")
-                .setPositiveButton("削除", (d, w) -> {
-                    Presets.delete(this, p.name);
+                .setTitle(p.name)
+                .setItems(new String[]{"今の値で上書き", "削除"}, (d, which) -> {
+                    if (which == 0) {
+                        Presets.save(this, p.name, currentSteps());
+                        toast("「" + p.name + "」を今の値で上書きしました");
+                    } else {
+                        Presets.delete(this, p.name);
+                        toast("「" + p.name + "」を削除しました");
+                    }
                     buildPresets();
-                    toast("「" + p.name + "」を削除しました");
                 })
                 .setNegativeButton("キャンセル", null)
                 .show();
@@ -596,6 +615,10 @@ public class MainActivity extends Activity {
         global.setChecked(Eq.isGlobal(this));
         resident.setChecked(Eq.isResident(this));
         perOutput.setChecked(Outputs.isEnabled(this));
+        watch.setChecked(Watch.isEnabled(this) && canDump());
+        watch.setEnabled(canDump());
+        watchHint.setText(canDump() ? getString(R.string.watch_hint)
+                : getString(R.string.watch_hint) + "\n" + getString(R.string.watch_need_dump) + "\n" + Chain.GRANT);
         // Off: the curve stays visible but greyed and untouchable.
         bands.setEnabled(on);
         for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(on);
@@ -714,6 +737,8 @@ public class MainActivity extends Activity {
         sb.append("ikora: ").append(Eq.isOn(this) ? "ON" : "OFF").append('\n');
         sb.append("モード: ").append(Eq.isGlobal(this) ? "全体" : "再生ごと").append('\n');
         sb.append("常駐して待つ: ").append(Eq.isResident(this) ? "ON" : "OFF").append('\n');
+        sb.append("YouTube を探す: ").append(Watch.isEnabled(this) ? "ON" : "OFF")
+                .append(Watch.active(this) ? "（動作中）" : "（止まっている）").append('\n');
         sb.append("出力機器ごとに覚える: ").append(Outputs.isEnabled(this)
                 ? "ON（今: " + Outputs.activeLabel(this) + "）" : "OFF").append('\n');
         sb.append("常駐サービス: ").append(serviceRunning() ? "動いている" : "止まっている").append('\n');
@@ -793,6 +818,7 @@ public class MainActivity extends Activity {
                 SpannableStringBuilder sb = new SpannableStringBuilder();
                 bold(sb, "音楽が鳴っていますが、音楽アプリから ikora への知らせが届いていません。");
                 sb.append('\n').append(getString(nextStep()));
+                if (!Watch.active(this)) sb.append('\n').append(getString(R.string.youtube_silent));
                 return sb;
             }
             if (Diag.everReceived(this)) return getString(R.string.idle);

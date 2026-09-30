@@ -50,8 +50,9 @@ public class EqService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        // Resident and whole-output modes have no broadcast to bring them back: ask to be restarted.
-        return Eq.isOn(this) && (Eq.isGlobal(this) || Eq.isResident(this)) ? START_STICKY : START_NOT_STICKY;
+        // Resident and whole-output modes, and silent players (Watch), have no broadcast to bring them back: ask to be restarted.
+        return Eq.isOn(this) && (Eq.isGlobal(this) || Eq.isResident(this)) || Watch.active(this)
+                ? START_STICKY : START_NOT_STICKY;
     }
 
     @Override

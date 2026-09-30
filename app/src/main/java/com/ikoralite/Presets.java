@@ -65,6 +65,13 @@ final class Presets {
         return out;
     }
 
+    /** The user's own first (they are what is picked most), then the built-in ones. */
+    static List<Preset> all(Context c) {
+        List<Preset> out = user(c);
+        out.addAll(BUILT_IN);
+        return out;
+    }
+
     static boolean isBuiltInName(String name) {
         for (Preset p : BUILT_IN) if (p.name.equals(name)) return true;
         return false;

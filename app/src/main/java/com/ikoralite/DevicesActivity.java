@@ -195,9 +195,7 @@ public class DevicesActivity extends Activity {
     }
 
     private List<Presets.Preset> allPresets() {
-        List<Presets.Preset> all = new ArrayList<>(Presets.BUILT_IN);
-        all.addAll(Presets.user(this));
-        return all;
+        return Presets.all(this);
     }
 
     /** A preset and a BASS level for the output. */

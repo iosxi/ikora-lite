@@ -63,6 +63,7 @@ final class Eq {
         Diag.note(c, global ? "全体モードにした" : "再生ごとのモードにした");
         releaseAll();
         attachMissing(c);
+        if (!global) Watch.look(c);
         changed();
     }
 
@@ -90,7 +91,7 @@ final class Eq {
 
     /** Whether the service should be running at all. */
     static boolean needsService(Context c) {
-        return !effects.isEmpty() || (isOn(c) && (isResident(c) || isGlobal(c)));
+        return !effects.isEmpty() || (isOn(c) && (isResident(c) || isGlobal(c))) || Watch.active(c);
     }
 
     // --- BASS: lift the low end without distortion ------------------------------------------
@@ -262,6 +263,7 @@ final class Eq {
         prefs(c).edit().putBoolean("on", on).apply();
         if (on) {
             attachMissing(c);
+            Watch.look(c);
         } else {
             releaseAll();
         }

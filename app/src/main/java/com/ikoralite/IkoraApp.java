@@ -25,6 +25,8 @@ public class IkoraApp extends Application {
         Eq.restore(this);
         // May be refused from the background (then the effect lives as long as the process).
         if (!Eq.effects.isEmpty()) EqService.sync(this);
+        // Players that never announce their session (YouTube): look for them ourselves.
+        Watch.follow(this);
         IntentFilter f = new IntentFilter();
         f.addAction(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
         f.addAction(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);

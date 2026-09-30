@@ -92,6 +92,7 @@ final class Diag {
             {"com.google.android.apps.youtube.music", "YouTube Music"},
             {"com.spotify.music", "Spotify"},
             {"com.amazon.mp3", "Amazon Music"},
+            {"com.google.android.youtube", "YouTube（知らせを出さない。DUMP で探す）"},
     };
 
     static String players(Context c) {
