@@ -52,6 +52,10 @@ public class MainActivity extends Activity {
     /** Silent players (YouTube), found with DUMP; and what it needs when DUMP is missing. */
     private Switch watch;
     private TextView watchHint;
+    /** Opens 通知へのアクセス, which lets ikora see that YouTube plays (no DUMP, no PC). */
+    private Button listenerOpen;
+    /** The same, up front where a user sees it, until granted or dismissed. */
+    private View listenerCard;
     /** Which output's settings the faders and BASS show. */
     private TextView outputView;
     private String shownOutput;
@@ -125,6 +129,7 @@ public class MainActivity extends Activity {
         Outputs.check(this);
         if (Eq.attachMissing(this)) EqService.sync(this);
         Watch.look(this);
+        noticeListener();
         refresh();
         markBass();
         retrySoon();
@@ -245,6 +250,7 @@ public class MainActivity extends Activity {
         col.addView(playerInfo);
 
         col.addView(batteryHint());
+        col.addView(listenerHint());
 
         outputView = new TextView(this);
         outputView.setPadding(0, dp(12), 0, 0);
@@ -343,14 +349,19 @@ public class MainActivity extends Activity {
         watch.setOnCheckedChangeListener((b, on) -> {
             if (syncing) return;
             Watch.setEnabled(this, on);
-            // It keeps ikora resident: started from here while we are in front.
+            // With DUMP it keeps ikora resident: started from here while we are in front.
             EqService.sync(this);
-            if (on) askNotifications();
+            if (on && canDump()) askNotifications();
             refresh();
         });
         modes.addView(watch);
         watchHint = hint(R.string.watch_hint);
         modes.addView(watchHint);
+        listenerOpen = new Button(this);
+        listenerOpen.setText("通知へのアクセスを開く");
+        listenerOpen.setAllCaps(false);
+        listenerOpen.setOnClickListener(v -> openListenerSettings());
+        modes.addView(listenerOpen);
         perOutput = new Switch(this);
         perOutput.setText(R.string.per_output);
         perOutput.setOnCheckedChangeListener((b, on) -> {
@@ -615,10 +626,14 @@ public class MainActivity extends Activity {
         global.setChecked(Eq.isGlobal(this));
         resident.setChecked(Eq.isResident(this));
         perOutput.setChecked(Outputs.isEnabled(this));
-        watch.setChecked(Watch.isEnabled(this) && canDump());
-        watch.setEnabled(canDump());
-        watchHint.setText(canDump() ? getString(R.string.watch_hint)
-                : getString(R.string.watch_hint) + "\n" + getString(R.string.watch_need_dump) + "\n" + Chain.GRANT);
+        watch.setChecked(Watch.isEnabled(this));
+        // DUMP (a developer's device) finds YouTube's own session; otherwise the whole output
+        // while it plays, which needs 通知へのアクセス.
+        boolean allowed = PlayingListener.allowed(this);
+        watchHint.setText(canDump() ? getString(R.string.watch_hint_dump)
+                : allowed ? getString(R.string.watch_hint)
+                : getString(R.string.watch_hint) + "\n" + getString(R.string.watch_need_access));
+        listenerOpen.setVisibility(canDump() || allowed ? View.GONE : View.VISIBLE);
         // Off: the curve stays visible but greyed and untouchable.
         bands.setEnabled(on);
         for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(on);
@@ -648,10 +663,11 @@ public class MainActivity extends Activity {
 
     private void refresh() {
         battery.setVisibility(needsBatteryExemption() ? View.VISIBLE : View.GONE);
+        listenerCard.setVisibility(needsListener() ? View.VISIBLE : View.GONE);
         syncControls();
         showOutput();
         status.setText(summary());
-        showPlayerInfo(!Eq.isGlobal(this) && Eq.isOn(this) && Eq.sessions.isEmpty() && Diag.mediaPlaying(this));
+        showPlayerInfo(!Eq.usesGlobal(this) && Eq.isOn(this) && Eq.sessions.isEmpty() && Diag.mediaPlaying(this));
         chainView.setText(chainText());
         chainButton.setVisibility(canDump() ? View.VISIBLE : View.GONE);
         chainButton.setEnabled(!chainReading);
@@ -735,10 +751,12 @@ public class MainActivity extends Activity {
     private String stateText() {
         StringBuilder sb = new StringBuilder();
         sb.append("ikora: ").append(Eq.isOn(this) ? "ON" : "OFF").append('\n');
-        sb.append("モード: ").append(Eq.isGlobal(this) ? "全体" : "再生ごと").append('\n');
+        sb.append("モード: ").append(Eq.isGlobal(this) ? "全体"
+                : Eq.isAutoGlobal() ? "再生ごと（YouTube の再生中のため今は全体）" : "再生ごと").append('\n');
         sb.append("常駐して待つ: ").append(Eq.isResident(this) ? "ON" : "OFF").append('\n');
         sb.append("YouTube を探す: ").append(Watch.isEnabled(this) ? "ON" : "OFF")
-                .append(Watch.active(this) ? "（動作中）" : "（止まっている）").append('\n');
+                .append(Watch.active(this) ? "（DUMP で探す）" : "").append('\n');
+        sb.append("通知へのアクセス: ").append(PlayingListener.allowed(this) ? "あり" : "なし").append('\n');
         sb.append("出力機器ごとに覚える: ").append(Outputs.isEnabled(this)
                 ? "ON（今: " + Outputs.activeLabel(this) + "）" : "OFF").append('\n');
         sb.append("常駐サービス: ").append(serviceRunning() ? "動いている" : "止まっている").append('\n');
@@ -746,7 +764,7 @@ public class MainActivity extends Activity {
             sb.append("通知の許可: ").append(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                     == PackageManager.PERMISSION_GRANTED ? "あり" : "なし").append('\n');
         }
-        if (Eq.isGlobal(this)) {
+        if (Eq.usesGlobal(this)) {
             sb.append("全体の効果: ").append(Eq.working(Eq.GLOBAL) ? "効いている（" + Eq.engineOn(Eq.GLOBAL) + "）"
                     : Eq.effects.containsKey(Eq.GLOBAL) ? "付いているが制御権なし" : "付いていない");
             String err = Eq.errors.get(Eq.GLOBAL);
@@ -807,7 +825,7 @@ public class MainActivity extends Activity {
 
     /** One line per open session: is ikora actually shaping it, and if not, who is. */
     private CharSequence summary() {
-        if (Eq.isGlobal(this)) return globalSummary();
+        if (Eq.usesGlobal(this)) return globalSummary();
         if (Eq.sessions.isEmpty()) {
             if (Diag.mediaPlaying(this)) {
                 // The one case a tester cannot see: the player plays but never tells us.
@@ -818,7 +836,7 @@ public class MainActivity extends Activity {
                 SpannableStringBuilder sb = new SpannableStringBuilder();
                 bold(sb, "音楽が鳴っていますが、音楽アプリから ikora への知らせが届いていません。");
                 sb.append('\n').append(getString(nextStep()));
-                if (!Watch.active(this)) sb.append('\n').append(getString(R.string.youtube_silent));
+                if (!Watch.active(this) && !PlayingListener.allowed(this)) sb.append('\n').append(getString(R.string.youtube_silent));
                 return sb;
             }
             if (Diag.everReceived(this)) return getString(R.string.idle);
@@ -891,6 +909,9 @@ public class MainActivity extends Activity {
         SpannableStringBuilder sb = new SpannableStringBuilder();
         if (!Eq.isOn(this)) {
             sb.append("ikora はオフ（全体モード）");
+        } else if (Eq.isAutoGlobal() && Eq.working(Eq.GLOBAL)) {
+            bold(sb, "✓ YouTube の再生中なので、全体に ikora が効いています");
+            sb.append("\n止まると、アプリごとの効き方に戻ります");
         } else if (Eq.working(Eq.GLOBAL)) {
             bold(sb, "✓ 全体（すべての音）に ikora が効いています");
             sb.append("\n").append(Eq.engineOn(Eq.GLOBAL));
@@ -939,7 +960,7 @@ public class MainActivity extends Activity {
             sb.append("\n読み込み中…");
             return sb;
         }
-        if (Eq.isGlobal(this)) {
+        if (Eq.usesGlobal(this)) {
             // One whole-output chain per output thread; show the ones carrying effects.
             for (Chain.Session s : chain.sessions) {
                 if (s.id != Eq.GLOBAL || s.effects.isEmpty()) continue;
@@ -1094,6 +1115,73 @@ public class MainActivity extends Activity {
         box.addView(b);
         battery = box;
         return box;
+    }
+
+    // --- 通知へのアクセス, for YouTube --------------------------------------------------------
+
+    /**
+     * YouTube never tells ikora it plays, and apps cannot learn its session (AOSP anonymises it)
+     * without DUMP, which needs a PC. A notification listener may see which app plays: then the
+     * effect goes on the whole output while YouTube plays. Say so up front, where a user sees it.
+     */
+    private View listenerHint() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, dp(12), 0, 0);
+        TextView t = new TextView(this);
+        t.setText(R.string.listener_card);
+        box.addView(t);
+        LinearLayout row = new LinearLayout(this);
+        Button open = new Button(this);
+        open.setText("設定を開く");
+        open.setAllCaps(false);
+        open.setOnClickListener(v -> openListenerSettings());
+        row.addView(open, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Button later = new Button(this);
+        later.setText("今は使わない");
+        later.setAllCaps(false);
+        later.setOnClickListener(v -> {
+            ui().edit().putBoolean("listenerDismissed", true).apply();
+            toast("「動作の設定」からいつでも設定できます");
+            refresh();
+        });
+        row.addView(later, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        box.addView(row);
+        listenerCard = box;
+        return box;
+    }
+
+    /** YouTube is installed, ikora would reach it, and only the access is missing. */
+    private boolean needsListener() {
+        return Eq.isOn(this) && !Eq.isGlobal(this) && Watch.isEnabled(this) && !canDump()
+                && Watch.silentInstalled(this) && !PlayingListener.allowed(this)
+                && !ui().getBoolean("listenerDismissed", false);
+    }
+
+    /** Straight to ikora's own switch where Android allows it (11+), else the list. */
+    private void openListenerSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) toast(getString(R.string.listener_restricted_toast));
+        Intent list = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                        .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                                PlayingListener.component(this).flattenToString()));
+                return;
+            } catch (RuntimeException ignored) {
+                // Some builds lack the detail page.
+            }
+        }
+        startActivity(list);
+    }
+
+    /** The access is first seen on coming back from Settings: say it worked. */
+    private void noticeListener() {
+        boolean now = PlayingListener.allowed(this);
+        if (now == ui().getBoolean("hadListener", false)) return;
+        ui().edit().putBoolean("hadListener", now).apply();
+        Diag.note(this, now ? "通知へのアクセス: 許可された" : "通知へのアクセス: 外された");
+        if (now && !canDump()) toast("設定を確認しました。YouTube の再生中は全体に効きます");
     }
 
     private boolean needsBatteryExemption() {

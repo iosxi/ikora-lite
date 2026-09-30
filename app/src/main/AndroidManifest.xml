@@ -92,6 +92,19 @@
             </intent-filter>
         </receiver>
 
+        <!-- Which app is playing (YouTube, which never announces its session), from media
+             sessions. Needs 通知へのアクセス, turned on by the user in Settings; the
+             notifications themselves are not read. -->
+        <service
+            android:name=".PlayingListener"
+            android:exported="true"
+            android:label="@string/listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- Keeps the process (and so the effect) alive: while a session is open, or always in whole-output mode. -->
         <service
             android:name=".EqService"

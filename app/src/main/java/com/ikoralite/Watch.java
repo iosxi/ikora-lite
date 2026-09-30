@@ -19,7 +19,8 @@ import java.util.regex.Pattern;
 /**
  * Players that never announce their session (YouTube, the video app: seen on the XQ-FS44, it
  * plays with no OPEN broadcast at all). Their session is found instead in `dumpsys audio`,
- * which needs DUMP (granted once from adb, as for {@link Chain}). Without DUMP nothing here runs.
+ * which needs DUMP (granted once from adb, as for {@link Chain}). Without DUMP nothing here runs,
+ * and {@link PlayingListener} puts the effect on the whole output while YouTube plays instead.
  *
  * No broadcast wakes ikora for these players, so while this is in use ikora stays resident
  * ({@link Eq#needsService}) and looks each time some player starts or stops.
@@ -41,6 +42,7 @@ final class Watch {
         Eq.prefs(c).edit().putBoolean("watch", on).apply();
         Diag.note(c, on ? "知らせを出さないアプリ（YouTube）を探す: ON" : "知らせを出さないアプリ（YouTube）を探す: OFF");
         if (on) look(c);
+        Eq.decideAuto(c);
     }
 
     static boolean canDump(Context c) {
@@ -52,7 +54,19 @@ final class Watch {
         return Eq.isOn(c) && !Eq.isGlobal(c) && isEnabled(c) && canDump(c);
     }
 
-    private static boolean isSilent(String pkg) {
+    /** Whether any of these players is installed (visible through the launcher query). */
+    static boolean silentInstalled(Context c) {
+        for (String s : SILENT) {
+            try {
+                c.getPackageManager().getApplicationInfo(s, 0);
+                return true;
+            } catch (PackageManager.NameNotFoundException ignored) {
+            }
+        }
+        return false;
+    }
+
+    static boolean isSilent(String pkg) {
         for (String s : SILENT) if (s.equals(pkg)) return true;
         return false;
     }

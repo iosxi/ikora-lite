@@ -19,8 +19,12 @@
     <string name="paired_hint">まだ ikora で鳴らしていない Bluetooth 機器の名前を読むために、「付近のデバイス」の許可を求めます。許可しなくても、一度鳴らした機器はここに出ます。</string>
     <string name="preset_hint">「＋ 保存」で今の値に名前を付けて保存。自分のプリセットは長押しで「今の値で上書き」か「削除」を選べます。</string>
     <string name="watch_mode">YouTube（動画）にも効かせる</string>
-    <string name="watch_hint">YouTube は再生を始めても ikora に知らせを出しません。代わりに ikora が再生の始まりを見張り、YouTube の再生を見つけて付けます。そのため常駐します（通知欄に小さく表示が出ます）。</string>
-    <string name="watch_need_dump">使うには、PC から一度だけ次を実行してください（「今の音の流れ」の表示と同じ許可です）:</string>
+    <string name="watch_hint">YouTube は再生を始めても ikora に知らせを出さず、どの再生が YouTube のものかも分かりません。そこで YouTube の再生中だけ、全体（端末の音の出口）に効かせます。その間は、ほかのアプリの動画・音楽にも効きます。止まるとアプリごとの効き方に戻ります。</string>
+    <string name="watch_hint_dump">DUMP が許可されているので、YouTube の再生そのものを見つけて付けます（全体には効かせません）。そのため常駐します。</string>
+    <string name="watch_need_access">使うには、「通知へのアクセス」で ikora を ON にしてください（どのアプリが再生中かを知るためだけに使い、通知の中身は読みません）。</string>
     <string name="youtube_silent">YouTube（動画）なら、下の「動作の設定」の「YouTube（動画）にも効かせる」を使ってください。</string>
+    <string name="listener_label">ikora（YouTube の再生中か調べる）</string>
+    <string name="listener_card">YouTube（動画）にも効かせるには、端末の設定の「通知へのアクセス」で ikora を ON にしてください。どのアプリが再生中かを知るためだけに使い、通知の中身は読みません。\nスイッチが押せない（「制限付き設定」と出る）ときは、設定の「アプリ」→ ikora →右上の ︙ →「制限付き設定を許可」のあとで、もう一度 ON にしてください。</string>
+    <string name="listener_restricted_toast">押せないときは、アプリ情報の右上 ︙ →「制限付き設定を許可」</string>
     <string name="bass_hint">低音を持ち上げます。大きな低音は抑えるので、上げても歪みにくくなります（端末標準のイコライザで代用中は単純な持ち上げ）。</string>
 </resources>

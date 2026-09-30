@@ -58,12 +58,79 @@ final class Eq {
         return prefs(c).getBoolean("global", false);
     }
 
+    // --- While a silent player plays: the whole output, for a while -------------------------
+
+    /**
+     * YouTube plays and its session cannot be known (no DUMP): the effect is on the whole
+     * output meanwhile, as in whole-output mode. Told by {@link PlayingListener}.
+     */
+    private static boolean autoGlobal;
+    /** Last word from {@link PlayingListener}, to decide again when a setting changes. */
+    private static boolean silentPlaying;
+    private static final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    /**
+     * Back to per-player effects only after a pause this long: a skip or a buffering hiccup
+     * should not tear the effects down and rebuild them twice.
+     */
+    private static final long AUTO_OFF_MS = 5000;
+    private static Runnable autoOff;
+
+    /** Whether the effect is on the whole output now, by the setting or while YouTube plays. */
+    static boolean usesGlobal(Context c) {
+        return isGlobal(c) || autoGlobal;
+    }
+
+    static boolean isAutoGlobal() {
+        return autoGlobal;
+    }
+
+    /** DUMP finds YouTube's own session ({@link Watch}): then the whole output is not needed. */
+    private static boolean autoAllowed(Context c) {
+        return isOn(c) && !isGlobal(c) && Watch.isEnabled(c) && !Watch.canDump(c);
+    }
+
+    static void setSilentPlaying(Context c, boolean playing) {
+        silentPlaying = playing;
+        decideAuto(c);
+    }
+
+    /** Called also when a setting changes: ON/OFF, whole-output mode, the YouTube switch. */
+    static void decideAuto(Context c) {
+        Context app = c.getApplicationContext();
+        boolean want = silentPlaying && autoAllowed(app);
+        if (autoOff != null) main.removeCallbacks(autoOff);
+        autoOff = null;
+        if (want == autoGlobal) return;
+        if (want) {
+            switchAuto(app, true);
+        } else if (!autoAllowed(app)) {
+            switchAuto(app, false);
+        } else {
+            autoOff = () -> {
+                autoOff = null;
+                if (autoGlobal && !silentPlaying) switchAuto(app, false);
+            };
+            main.postDelayed(autoOff, AUTO_OFF_MS);
+        }
+    }
+
+    private static void switchAuto(Context c, boolean on) {
+        autoGlobal = on;
+        Diag.note(c, on ? "YouTube の再生中: 全体に効かせる" : "YouTube が止まった: アプリごとに戻す");
+        releaseAll();
+        attachMissing(c);
+        EqService.sync(c);
+        changed();
+    }
+
     static void setGlobal(Context c, boolean global) {
         prefs(c).edit().putBoolean("global", global).apply();
         Diag.note(c, global ? "全体モードにした" : "再生ごとのモードにした");
+        autoGlobal = false;
         releaseAll();
         attachMissing(c);
         if (!global) Watch.look(c);
+        decideAuto(c);
         changed();
     }
 
@@ -267,6 +334,7 @@ final class Eq {
         } else {
             releaseAll();
         }
+        decideAuto(c);
         changed();
     }
 
@@ -277,7 +345,7 @@ final class Eq {
      */
     static boolean attachMissing(Context c) {
         if (!isOn(c)) return false;
-        if (isGlobal(c)) {
+        if (usesGlobal(c)) {
             // Per-session effects would shape those players twice.
             if (effects.containsKey(GLOBAL)) return false;
             AudioEffect fx = globalDpLost ? createEqualizer(c, GLOBAL, gainsDb(c)) : create(c, GLOBAL, gainsDb(c));
@@ -302,7 +370,7 @@ final class Eq {
     /** Whether something that should have ikora's effect has none (another app holds it). */
     static boolean missing(Context c) {
         if (!isOn(c)) return false;
-        if (isGlobal(c)) return !effects.containsKey(GLOBAL);
+        if (usesGlobal(c)) return !effects.containsKey(GLOBAL);
         for (int s : sessions.keySet()) {
             if (!effects.containsKey(s)) return true;
         }

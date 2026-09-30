@@ -5,7 +5,7 @@
 このアプリは設定画面と、エフェクトを付け外しするだけ。
 
 - 対応: Android 9 (API 28) 〜 最新 (targetSdk 36 / Android 16)
-- 出来上がり: `ikora-lite.apk` — **約 90 KB**
+- 出来上がり: `ikora-lite.apk` — **約 100 KB**
 - 権限: **インストール時に自動で許可されるものが 4 つ**
   （`MODIFY_AUDIO_SETTINGS`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_SPECIAL_USE`、`RECEIVE_BOOT_COMPLETED`）。
   通知の許可（`POST_NOTIFICATIONS`）は「常駐して待つ」か「全体モード」を ON にしたときだけ求める。
@@ -14,8 +14,10 @@
   確認ダイアログは一度も出ない。通知の権限も求めない。
   ほかに **DUMP** を宣言しているが、これはインストールでは許可されず、PC から
   `adb shell pm grant com.ikoralite android.permission.DUMP` を一度実行したときだけ有効になる。
-  許可すると「今の音の流れ」が見え（下の「効いているものの表示」）、**YouTube（動画）にも効く**
-  （下の「YouTube（知らせを出さないアプリ）」）。許可しなくても他は全部動く
+  許可すると「今の音の流れ」が見え（下の「効いているものの表示」）、YouTube（動画）の再生そのものに付けられる
+  （下の「YouTube（知らせを出さないアプリ）」）。許可しなくても他は全部動く。
+  **通知へのアクセス**（`NotificationListenerService`）は、利用者が端末の設定で ON にしたときだけ有効。
+  YouTube が再生中かを知るためだけに使う（下の「YouTube（知らせを出さないアプリ）」）
 - 依存ライブラリ: **無し**（AndroidX も Kotlin も使っていない）
 
 ## 使い方
@@ -128,8 +130,39 @@ YouTube Music  → Bluetooth
 ## YouTube（知らせを出さないアプリ）
 
 YouTube（動画、`com.google.android.youtube`）は、再生を始めても `OPEN_AUDIO_EFFECT_CONTROL_SESSION` を
-**出さない**（XQ-FS44 で、再生中に ikora が何も受け取らないことを確認）。そこで DUMP があるときは、
-ikora のほうから探しに行く。
+**出さない**（XQ-FS44 で、再生中に ikora が何も受け取らないことを確認）。
+YouTube の APK の中には送る処理があるが、Google のサーバーから届く設定値が 4 のときだけ送る作りで、
+利用者には変えられない（将来有効になれば、今の ikora のままで効く）。
+
+アプリに渡る再生の一覧は、セッション ID と uid が伏せてある（AOSP の
+`AudioPlaybackConfiguration.anonymizedCopy` が `AUDIO_SESSION_ALLOCATE` に置き換える）。
+再生器の番号（piid）・状態・用途は `toString()` で見えるが、YT Music も曲ごとに再生器を作り直し、
+属性（`USAGE_MEDIA`・`CONTENT_TYPE_MUSIC`・flags 0xA00）も YouTube と同じなので、見分けられない。
+そこで、手に入る許可によって二通りに効かせる。
+
+### ふつうの利用者: YouTube の再生中だけ全体に効かせる（通知へのアクセス）
+
+PC 無しで得られる手がかりは、メディアセッション（どのアプリが再生中か）だけ。これを読めるのは
+通知へのアクセスを持つアプリだけなので、利用者に端末の設定で ON にしてもらう（`PlayingListener`）。
+通知そのものは読まない（`onNotificationPosted` を持たない）。
+
+- YouTube のメディアセッションが再生中（PLAYING・BUFFERING など）になったら、アプリごとの効果を外して
+  全体（セッション 0）に付ける。止まったら 5 秒待ってからアプリごとに戻す（曲送りや読み込みで付け外しを繰り返さないため）
+- 全体に付けている間は、アプリごとの効果は付けない。YouTube から YT Music に切り替えたときも、
+  YT Music は全体の効果だけで数秒過ごし、その後アプリごとに移る（二重にならないことを確認）
+- 全体の効果は Android が**音楽用の出力**に置き、音楽が鳴る出力へ付いて移る。XQ-FS44 では YouTube・YT Music は
+  ディープバッファの出力、通知音・操作音は PRIMARY|FAST の出力で鳴っていたので、**通知音には効かない**。
+  Sony 純正の DAP・DSEE・360 Upmix もここに付いている。ほかの機種では確かめていない
+- 画面の上に「通知へのアクセスで ikora を ON に」の案内を出す（YouTube が入っていて、許可が無く、「今は使わない」を
+  押していないとき）。「設定を開く」で ikora の切り替え画面へ直接飛ぶ（Android 11+）
+- Android 13 以降、ストア以外から入れたアプリは「制限付き設定」でスイッチが押せない。案内のとおり
+  「アプリ」→ ikora →右上の ︙ →「制限付き設定を許可」（本人確認あり）のあとで ON にする。
+  XQ-FS44 で `appops` によりこの状態を再現し、拒否のダイアログとメニューの文言を確かめた（本人確認の先は試していない）
+- 待機中の負担: 通知へのアクセスあり・YT Music 再生中に 60 秒で ikora 1 tick、再生/一時停止 5 回で 0 tick
+
+### DUMP があるとき（開発者の端末）: YouTube の再生そのものに付ける
+
+DUMP があるときは全体を使わず、ikora のほうから YouTube のセッションを探しに行く（`Watch`）。
 
 - 再生の開始・停止（`registerAudioPlaybackCallback`）のたびに、0.5 秒待ってから `dumpsys audio` を 1 回読み、
   `players:` の一覧から「YouTube の uid・`state:started`・`USAGE_MEDIA`」の `sessionId` を見つけて付ける。
@@ -137,7 +170,7 @@ ikora のほうから探しに行く。
 - YouTube は動画ごとに再生器（piid）を作り直すが、セッションは同じものを使い続ける（3 本続けて 1713）。
   YouTube を強制停止して再生し直すと新しいセッション（2217）になり、古いほうと入れ替わる
 - YouTube は ikora を起こしてくれないので、この機能が動いている間（ON・DUMP あり・全体モードでない）は常駐する
-- 「動作の設定」の「YouTube（動画）にも効かせる」で止められる（初めから ON。DUMP が無いと押せず、許可の手順を出す）
+- 「動作の設定」の「YouTube（動画）にも効かせる」で、どちらの方式も止められる（初めから ON）
 - `dumpsys audio` は XQ-FS44 で 1 回 24 ms（`media.audio_flinger` は 46 ms）。
   YouTube 再生中に画面を閉じて 60 秒置いた間、ikora は 0 tick
 
