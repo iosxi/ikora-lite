@@ -18,6 +18,15 @@ public class IkoraApp extends Application {
     @SuppressLint("UnspecifiedRegisterReceiverFlag") // before Android 13 there is no such flag
     public void onCreate() {
         super.onCreate();
+        // A tester's report said "crash" four times with nothing more: keep where it happened.
+        Thread.UncaughtExceptionHandler dflt = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((th, e) -> {
+            try {
+                Diag.crashed(this, e);
+            } catch (Throwable ignored) {
+            }
+            if (dflt != null) dflt.uncaughtException(th, e);
+        });
         Diag.note(this, "プロセス起動");
         // Before restoring: effects are then created with the current output's settings.
         Outputs.check(this);

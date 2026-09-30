@@ -623,9 +623,48 @@ final class Eq {
                 }
             }
         } catch (RuntimeException e) {
-            // Another app's effect has taken control of this session.
+            // Another app's effect has taken control of this session. Kept for the report:
+            // only logged before, so "changes do not take" could not be told from "not heard".
             Log.w(TAG, "apply failed: " + e.getMessage());
+            applyError = new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.ROOT)
+                    .format(new java.util.Date()) + " " + fx.getClass().getSimpleName() + ": " + e;
         }
+    }
+
+    /** The last failure to set our values on an effect, or null. */
+    static String applyError;
+
+    /**
+     * What the engine holds now for each of ikora's effects, read back: whether a change
+     * reached the effect at all. For the report.
+     */
+    static String readBackAll() {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<Integer, AudioEffect> e : effects.entrySet()) {
+            AudioEffect fx = e.getValue();
+            sb.append("- session ").append(e.getKey()).append(": ");
+            try {
+                sb.append(fx.getEnabled() ? "有効" : "無効").append("・制御権 ")
+                        .append(fx.hasControl() ? "あり" : "なし").append("・");
+                if (fx instanceof DynamicsProcessing) {
+                    DynamicsProcessing dp = (DynamicsProcessing) fx;
+                    for (int i = 0; i < N; i++) {
+                        sb.append(i == 0 ? "" : " / ").append(FREQ[i]).append(String.format(
+                                java.util.Locale.ROOT, " %+.1f", dp.getPreEqBandByChannelIndex(0, i).getGain()));
+                    }
+                } else if (fx instanceof Equalizer) {
+                    Equalizer eq = (Equalizer) fx;
+                    for (short b = 0; b < eq.getNumberOfBands(); b++) {
+                        sb.append(b == 0 ? "" : " / ").append(eq.getCenterFreq(b) / 1000).append(String.format(
+                                java.util.Locale.ROOT, " %+.1f", eq.getBandLevel(b) / 100f));
+                    }
+                }
+            } catch (RuntimeException x) {
+                sb.append("読み戻せない: ").append(x);
+            }
+            sb.append('\n');
+        }
+        return sb.length() == 0 ? "（付いていない）\n" : sb.toString();
     }
 
     /** Our curve at an arbitrary frequency, interpolated on a log-frequency axis. */

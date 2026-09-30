@@ -185,6 +185,44 @@ final class Diag {
         }
     }
 
+    /**
+     * The whole-output effect goes where Android plays music: an offloaded output, else the
+     * spatializer (only with stereo spatialisation on), else deep buffer (AOSP
+     * selectOutputForMusicEffects). Spatialised sound may pass elsewhere: say whether it is on.
+     */
+    static String spatial(Context c) {
+        if (Build.VERSION.SDK_INT < 32) return "（Android 12L 未満のため無し）\n";
+        android.media.Spatializer s = c.getSystemService(AudioManager.class).getSpatializer();
+        AudioAttributes media = new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build();
+        android.media.AudioFormat stereo = new android.media.AudioFormat.Builder()
+                .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_STEREO)
+                .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setSampleRate(48000).build();
+        android.media.AudioFormat surround = new android.media.AudioFormat.Builder()
+                .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_5POINT1)
+                .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setSampleRate(48000).build();
+        return "使える: " + (s.isAvailable() ? "はい" : "いいえ")
+                + " / 有効: " + (s.isEnabled() ? "はい" : "いいえ")
+                + " / 段階: " + s.getImmersiveAudioLevel()
+                + " / 今の出力で立体化されるか: ステレオ " + (s.canBeSpatialized(media, stereo) ? "はい" : "いいえ")
+                + "・5.1ch " + (s.canBeSpatialized(media, surround) ? "はい" : "いいえ") + "\n";
+    }
+
+    /**
+     * An uncaught exception, written at once (the process is about to die, so apply() would
+     * lose it). The exit reason alone said only "crash", with no clue where.
+     */
+    static void crashed(Context c, Throwable t) {
+        StringBuilder sb = new StringBuilder("異常終了: ").append(t);
+        StackTraceElement[] st = t.getStackTrace();
+        for (int i = 0; i < Math.min(6, st.length); i++) sb.append(" / ").append(st[i]);
+        String line = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT).format(new Date()) + " " + sb;
+        List<String> ev = events(c);
+        ev.add(line);
+        while (ev.size() > KEEP) ev.remove(0);
+        prefs(c).edit().putString(KEY, String.join("\n", ev)).commit();
+    }
+
     /** Everything a tester can paste back: device, settings, platform effects, events. */
     static String report(Context c, String state, String probe) {
         StringBuilder sb = new StringBuilder();
@@ -197,6 +235,9 @@ final class Diag {
                 .append(" (").append(Build.DEVICE).append(")\n");
         sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
         sb.append("\n[状態]\n").append(state).append('\n');
+        sb.append("\n[ikora の効果が今持っている値（読み戻し、dB）]\n").append(Eq.readBackAll());
+        if (Eq.applyError != null) sb.append("値を設定できなかった最後: ").append(Eq.applyError).append('\n');
+        sb.append("\n[空間オーディオ]\n").append(spatial(c));
         String test = selfTestResult(c);
         sb.append("\n[受信テスト]\n").append(test == null ? "（未実施）" : test).append('\n');
         sb.append("\n[音楽アプリの版]\n").append(players(c));

@@ -741,6 +741,10 @@ public class MainActivity extends Activity {
         StringBuilder sb = new StringBuilder();
         String test = Diag.selfTestResult(this);
         if (test != null) sb.append("受信テスト: ").append(test).append("\n\n");
+        // Whether a change reached the effect, and whether spatial audio may route around it.
+        sb.append("効果が今持っている値（dB）:\n").append(Eq.readBackAll());
+        if (Eq.applyError != null) sb.append("値を設定できなかった最後: ").append(Eq.applyError).append('\n');
+        sb.append("空間オーディオ: ").append(Diag.spatial(this)).append('\n');
         sb.append("最近の出来事（新しい順）:");
         if (ev.isEmpty()) sb.append("\n（まだ何も起きていません）");
         for (int i = ev.size() - 1; i >= Math.max(0, ev.size() - 6); i--) sb.append('\n').append(ev.get(i));
