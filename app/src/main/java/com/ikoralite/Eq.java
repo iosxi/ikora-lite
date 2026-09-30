@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.media.audiofx.AudioEffect;
 import android.media.audiofx.DynamicsProcessing;
 import android.media.audiofx.Equalizer;
+import android.os.Build;
 import android.util.Log;
 
 import java.util.HashSet;
@@ -86,11 +87,22 @@ final class Eq {
 
     /** DUMP finds YouTube's own session ({@link Watch}): then the whole output is not needed. */
     private static boolean autoAllowed(Context c) {
-        return isOn(c) && !isGlobal(c) && Watch.isEnabled(c) && !Watch.canDump(c);
+        // Android 10 and older suspend the whole output while things play: the players would
+        // lose their own effects for nothing.
+        return isOn(c) && !isGlobal(c) && Watch.isEnabled(c) && !Watch.canDump(c) && globalReliable();
+    }
+
+    /** Why the whole output could not be had while YouTube plays, or null. For the screen. */
+    private static String autoBlocked;
+
+    static String autoBlocked() {
+        return silentPlaying ? autoBlocked : null;
     }
 
     static void setSilentPlaying(Context c, boolean playing) {
         silentPlaying = playing;
+        // Each new play of YouTube tries again: the other app may have let go meanwhile.
+        if (!playing) autoBlocked = null;
         decideAuto(c);
     }
 
@@ -100,6 +112,9 @@ final class Eq {
         boolean want = silentPlaying && autoAllowed(app);
         if (autoOff != null) main.removeCallbacks(autoOff);
         autoOff = null;
+        if (!autoAllowed(app)) autoBlocked = null;
+        // Tried and refused for this play: do not tear the players' effects down again.
+        if (want && autoBlocked != null) return;
         if (want == autoGlobal) return;
         if (want) {
             switchAuto(app, true);
@@ -115,10 +130,34 @@ final class Eq {
     }
 
     private static void switchAuto(Context c, boolean on) {
-        autoGlobal = on;
-        Diag.note(c, on ? "YouTube の再生中: 全体に効かせる" : "YouTube が止まった: アプリごとに戻す");
-        releaseAll();
-        attachMissing(c);
+        if (on) {
+            // Taken already (Android 11+ has no stand-in): the players keep their own effects
+            // rather than losing them for nothing.
+            if (deviceHasDp() && dpTaken(GLOBAL)) {
+                autoBlocked = GLOBAL_TAKEN;
+                Diag.note(c, "YouTube の再生中だが、全体に付けられない（" + autoBlocked + "）。アプリごとのまま");
+                changed();
+                return;
+            }
+            // The players' own effects go first: a whole-output effect made while one of them
+            // is enabled is born suspended, and on the SH-M06 (Android 10) stayed so after they
+            // were released.
+            autoGlobal = true;
+            releaseAll();
+            if (attachMissing(c)) {
+                Diag.note(c, "YouTube の再生中: 全体に効かせる");
+            } else {
+                autoGlobal = false;
+                autoBlocked = errors.containsKey(GLOBAL) ? errors.get(GLOBAL) : "全体に付けられません";
+                Diag.note(c, "YouTube の再生中だが、全体に付けられない（" + autoBlocked + "）。アプリごとに戻す");
+                attachMissing(c);
+            }
+        } else {
+            autoGlobal = false;
+            Diag.note(c, "YouTube が止まった: アプリごとに戻す");
+            releaseAll();
+            attachMissing(c);
+        }
         EqService.sync(c);
         changed();
     }
@@ -140,7 +179,6 @@ final class Eq {
         control.clear();
         errors.clear();
         blocked.clear();
-        globalDpLost = false;
     }
 
     /**
@@ -305,8 +343,12 @@ final class Eq {
         for (String item : saved.split(";")) {
             int colon = item.indexOf(':');
             if (colon <= 0) continue;
+            String pkg = item.substring(colon + 1);
+            // Found through DUMP (Watch). Without it that session can be neither followed nor
+            // replaced, and showed as "✓ YouTube" next to "YouTube is not reached".
+            if (Watch.isSilent(pkg) && !Watch.canDump(c)) continue;
             try {
-                sessions.put(Integer.parseInt(item.substring(0, colon)), item.substring(colon + 1));
+                sessions.put(Integer.parseInt(item.substring(0, colon)), pkg);
             } catch (NumberFormatException ignored) {
             }
         }
@@ -348,7 +390,7 @@ final class Eq {
         if (usesGlobal(c)) {
             // Per-session effects would shape those players twice.
             if (effects.containsKey(GLOBAL)) return false;
-            AudioEffect fx = globalDpLost ? createEqualizer(c, GLOBAL, gainsDb(c)) : create(c, GLOBAL, gainsDb(c));
+            AudioEffect fx = createGlobal(c);
             if (fx == null) return false;
             effects.put(GLOBAL, fx);
             return true;
@@ -449,8 +491,6 @@ final class Eq {
     }
 
     private static Boolean hasDp;
-    /** Session 0's DynamicsProcessing was taken over by another app: use the Equalizer there. */
-    private static boolean globalDpLost;
 
     static void collectOrphans() {
         System.gc();
@@ -488,6 +528,13 @@ final class Eq {
                 // Lost control meanwhile: nothing of ours is being applied then.
             }
         }
+        // Disabled before released, as volzz does: an enabled per-player effect is what makes
+        // Android suspend the whole-output ones, and it should say it is gone.
+        try {
+            fx.setEnabled(false);
+        } catch (RuntimeException ignored) {
+            // Not ours to disable (no control): releasing is enough.
+        }
         fx.release();
     }
 
@@ -496,6 +543,24 @@ final class Eq {
      * at the lowest priority: without control its config cannot be set, so it throws.
      */
     private static boolean dpTaken(int session) {
+        // A plain AudioEffect handle at the lowest priority: it gets control only if nobody else
+        // holds the engine, and can always be released. The DynamicsProcessing constructor
+        // used before throws when it lacks control, and the handle it had made stayed attached
+        // (seen on session 0 of the XQ-FS44 a minute later, gc notwithstanding), keeping the
+        // other app's engine alive after that app let go.
+        try {
+            AudioEffect probe = (AudioEffect) AudioEffect.class
+                    .getConstructor(java.util.UUID.class, java.util.UUID.class, int.class, int.class)
+                    .newInstance(AudioEffect.EFFECT_TYPE_DYNAMICS_PROCESSING,
+                            // AudioEffect.EFFECT_TYPE_NULL (hidden): any implementation of the type
+                            java.util.UUID.fromString("ec7178ec-e5e1-4432-a3f4-4657e6795210"),
+                            Integer.MIN_VALUE, session);
+            boolean taken = !probe.hasControl();
+            probe.release();
+            return taken;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            Log.w(TAG, "plain handle unavailable: " + e);
+        }
         try {
             new DynamicsProcessing(Integer.MIN_VALUE, session, null).release();
             return false;
@@ -505,14 +570,38 @@ final class Eq {
         }
     }
 
+    /**
+     * Android suspends whole-output effects while players have effects of their own, and from
+     * Android 11 exempts DynamicsProcessing only (AOSP EffectChain::isEffectEligibleForSuspend).
+     * The app is not told: getEnabled() stays true. Measured with a whole-output Equalizer:
+     * suspended on the XQ-FS44 (Android 16) and the AQUOS SH-M06 (Android 10), and a tester's
+     * AQUOS R8 (Android 16) heard no change. So the whole output takes a DynamicsProcessing or
+     * nothing: v1–v19 fell back to the Equalizer there, which only looked like it worked.
+     */
+    static final String GLOBAL_TAKEN = "ほかのアプリ（音量調整アプリなど）が全体の DynamicsProcessing を使っています";
+
+    /**
+     * Whether the whole output can be relied on at all: on Android 10 and older even a
+     * DynamicsProcessing there is suspended (the SH-M06 suspended volzz's while YouTube played,
+     * with only the system's volume listener on it). YouTube via the whole output needs 11.
+     */
+    static boolean globalReliable() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+    }
+
+    private static AudioEffect createGlobal(Context c) {
+        return create(c, GLOBAL, gainsDb(c));
+    }
+
     private static AudioEffect create(Context c, int session, float[] g) {
         // On the whole output a DynamicsProcessing is usually someone's volume tool (volzz)
-        // or the vendor's. Joining it would overwrite their settings with ours, or theirs
-        // ours: do not touch it, use the Equalizer there instead.
+        // or the vendor's. Joining it takes it over (the newest handle of equal priority gets
+        // control, measured on the SH-M06) and resets their settings, volzz's volume included:
+        // the sound would jump. Do not touch it.
         if (session == GLOBAL && deviceHasDp() && dpTaken(GLOBAL)) {
-            globalDpLost = true;
-            Diag.note(c, "全体: ほかのアプリの DynamicsProcessing があるため、端末標準のイコライザを使う");
-            return createEqualizer(c, session, g);
+            errors.put(GLOBAL, GLOBAL_TAKEN);
+            if (blocked.add(GLOBAL)) Diag.note(c, "全体: " + GLOBAL_TAKEN + "。付けない");
+            return null;
         }
         if (deviceHasDp()) {
             // The same bands on every device. If another app's DynamicsProcessing already
@@ -550,13 +639,13 @@ final class Eq {
                 if (blocked.add(session)) {
                     Diag.note(c, "session " + session + ": DynamicsProcessing を付けられない: " + e);
                 }
-                // On a player's session, a DynamicsProcessing we cannot control means another
-                // equalizer shapes it: stacking a second one is wrong. On the whole output it
-                // is usually a volume tool (volzz) or the vendor's; taking it over would break
-                // theirs, so fall back to a different kind of effect instead.
-                if (session != GLOBAL) return null;
+                // A DynamicsProcessing we cannot control means another app shapes the session:
+                // stacking a second equalizer is wrong, and on the whole output an Equalizer
+                // would be suspended anyway (see GLOBAL_TAKEN).
+                return null;
             }
         }
+        // Only a device with no DynamicsProcessing at all gets here.
         return createEqualizer(c, session, g);
     }
 
@@ -594,13 +683,19 @@ final class Eq {
                 if (effect instanceof DynamicsProcessing) applyBass((DynamicsProcessing) effect, bass(app));
             } else if (session == GLOBAL && effect instanceof DynamicsProcessing && effects.get(GLOBAL) == effect) {
                 // On the whole output the engine is shared with whoever took it (volzz, a
-                // vendor tool): keep out of their settings and move to a different kind.
-                globalDpLost = true;
+                // vendor tool): keep out of their settings.
                 effects.remove(GLOBAL);
                 control.remove(GLOBAL);
                 effect.release();
-                Diag.note(app, "全体: DynamicsProcessing を手放し、端末標準のイコライザに切り替える");
+                Diag.note(app, "全体: DynamicsProcessing をほかのアプリに取られたので手放す");
+                if (autoGlobal) {
+                    // Only there for YouTube: give the players their own effects back.
+                    autoGlobal = false;
+                    autoBlocked = GLOBAL_TAKEN;
+                    Diag.note(app, "YouTube の再生中だが、全体を取られた。アプリごとに戻す");
+                }
                 attachMissing(app);
+                EqService.sync(app);
             }
             changed();
         });

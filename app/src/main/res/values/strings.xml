@@ -20,6 +20,7 @@
     <string name="preset_hint">「＋ 保存」で今の値に名前を付けて保存。自分のプリセットは長押しで「今の値で上書き」か「削除」を選べます。</string>
     <string name="watch_mode">YouTube（動画）にも効かせる</string>
     <string name="watch_hint">YouTube は再生を始めても ikora に知らせを出さず、どの再生が YouTube のものかも分かりません。そこで YouTube の再生中だけ、全体（端末の音の出口）に効かせます。その間は、ほかのアプリの動画・音楽にも効きます。止まるとアプリごとの効き方に戻ります。</string>
+    <string name="watch_hint_old">Android 10 以前では使えません。YouTube の音は全体でしか変えられず、この版の Android は再生中に全体の効果を止めてしまうためです（AQUOS SH-M06 で確認）。PC から DUMP を許可した場合だけ、YouTube の再生そのものに付けられます。</string>
     <string name="watch_hint_dump">DUMP が許可されているので、YouTube の再生そのものを見つけて付けます（全体には効かせません）。そのため常駐します。</string>
     <string name="watch_need_access">使うには、「通知へのアクセス」で ikora を ON にしてください（どのアプリが再生中かを知るためだけに使い、通知の中身は読みません）。</string>
     <string name="youtube_silent">YouTube（動画）なら、下の「動作の設定」の「YouTube（動画）にも効かせる」を使ってください。</string>

@@ -631,9 +631,10 @@ public class MainActivity extends Activity {
         // while it plays, which needs 通知へのアクセス.
         boolean allowed = PlayingListener.allowed(this);
         watchHint.setText(canDump() ? getString(R.string.watch_hint_dump)
+                : !Eq.globalReliable() ? getString(R.string.watch_hint_old)
                 : allowed ? getString(R.string.watch_hint)
                 : getString(R.string.watch_hint) + "\n" + getString(R.string.watch_need_access));
-        listenerOpen.setVisibility(canDump() || allowed ? View.GONE : View.VISIBLE);
+        listenerOpen.setVisibility(canDump() || allowed || !Eq.globalReliable() ? View.GONE : View.VISIBLE);
         // Off: the curve stays visible but greyed and untouchable.
         bands.setEnabled(on);
         for (int i = 0; i < presets.getChildCount(); i++) presets.getChildAt(i).setEnabled(on);
@@ -827,8 +828,19 @@ public class MainActivity extends Activity {
         startActivity(Intent.createChooser(send, "診断情報を送る"));
     }
 
-    /** One line per open session: is ikora actually shaping it, and if not, who is. */
+    /** YouTube plays but the whole output could not be had: say so above the players' lines. */
     private CharSequence summary() {
+        String blocked = Eq.autoBlocked();
+        if (blocked == null) return playersSummary();
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        bold(sb, "✗ YouTube に ikora は効いていません");
+        sb.append('\n').append(blocked).append("。YouTube の音は全体（DynamicsProcessing）でしか変えられないため、その間は効かせられません。")
+                .append('\n').append(playersSummary());
+        return sb;
+    }
+
+    /** One line per open session: is ikora actually shaping it, and if not, who is. */
+    private CharSequence playersSummary() {
         if (Eq.usesGlobal(this)) return globalSummary();
         if (Eq.sessions.isEmpty()) {
             if (Diag.mediaPlaying(this)) {
@@ -1158,7 +1170,7 @@ public class MainActivity extends Activity {
     /** YouTube is installed, ikora would reach it, and only the access is missing. */
     private boolean needsListener() {
         return Eq.isOn(this) && !Eq.isGlobal(this) && Watch.isEnabled(this) && !canDump()
-                && Watch.silentInstalled(this) && !PlayingListener.allowed(this)
+                && Eq.globalReliable() && Watch.silentInstalled(this) && !PlayingListener.allowed(this)
                 && !ui().getBoolean("listenerDismissed", false);
     }
 
