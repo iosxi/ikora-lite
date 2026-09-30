@@ -834,8 +834,10 @@ public class MainActivity extends Activity {
         if (blocked == null) return playersSummary();
         SpannableStringBuilder sb = new SpannableStringBuilder();
         bold(sb, "✗ YouTube に ikora は効いていません");
-        sb.append('\n').append(blocked).append("。YouTube の音は全体（DynamicsProcessing）でしか変えられないため、その間は効かせられません。")
-                .append('\n').append(playersSummary());
+        sb.append('\n').append(blocked).append("。YouTube の音は全体（DynamicsProcessing）でしか変えられないため、その間は効かせられません。");
+        // What plays is YouTube, known: "no player told us, force-stop it" would be wrong
+        // (shown so on the AQUOS sense4 plus).
+        if (!Eq.sessions.isEmpty()) sb.append('\n').append(playersSummary());
         return sb;
     }
 

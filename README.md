@@ -182,6 +182,10 @@ Suspended 欄を見た結果:
 |---|---|---|
 | XQ-FS44（Android 16） | 一時停止（再生ごとの効果を外した後も、システムの Music Volume Listener が付いた再生がある間は止まったまま） | 動いている |
 | AQUOS SH-M06（Android 10） | 一時停止 | 一時停止（ikora が YT Music に付けている間は volzz のものも止まる。再起動直後、YouTube の再生中にシステムの Volume listener だけでも止まった） |
+| AQUOS sense4 plus SH-M16（Android 12） | 一時停止（再生ごとの効果を外した後も、Volume listener の付いた再生がある間は止まったまま） | 動いている（volzz のもの。YouTube と同じディープバッファの出力） |
+
+sense4 plus は R8 と同じく volzz と Poweramp Equalizer が入った構成で、R8 の症状（Equalizer の代用が止められて効かない）が
+そのまま再現した。v20 はこの端末で「✗ YouTube に ikora は効いていません（ほかのアプリ…が全体の DynamicsProcessing を使っています）」と出す。
 
 遠隔のテスターの AQUOS R8（Android 16）では、全体の DynamicsProcessing をほかのアプリが持っていて
 ikora は Equalizer で代用し、値は入っている（読み戻しで全帯域 −8〜−12 dB）のに、YouTube でも
